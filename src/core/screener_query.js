@@ -267,7 +267,7 @@ export const FIELDS_CATALOG = {
   'relative_volume_10d_calc': 'Today\'s volume / 10-day average',
   average_volume_10d_calc:    '10-day average volume',
   average_volume_30d_calc:    '30-day average volume',
-  Value_Traded:       'Today\'s turnover (price × volume)',
+  'Value.Traded':     'Today\'s turnover (price × volume)',
 
   // Fundamentals — equities
   market_cap_basic:           'Market cap (USD-equivalent)',
@@ -281,31 +281,42 @@ export const FIELDS_CATALOG = {
   sector:                     'Sector (Finance, Technology, ...)',
   industry:                   'Industry sub-classification',
 
-  // Performance / momentum
-  Perf_W:             '1-week return %',
-  Perf_1M:            '1-month return %',
-  Perf_3M:            '3-month return %',
-  Perf_6M:            '6-month return %',
-  Perf_YTD:           'Year-to-date return %',
-  Perf_Y:             '1-year return %',
-  Perf_5Y:            '5-year return %',
-  Volatility_W:       '1-week realized vol %',
-  Volatility_M:       '1-month realized vol %',
+  // Performance / momentum — NOTE: these field names use DOTS, not
+  // underscores. "Perf_1M" is NOT valid; the scanner rejects it with
+  // 'Unknown field "Perf_1M"'. Verified live against india/scan.
+  'Perf.W':           '1-week return %',
+  'Perf.1M':          '1-month return %',
+  'Perf.3M':          '3-month return %',
+  'Perf.6M':          '6-month return %',
+  'Perf.YTD':         'Year-to-date return %',
+  'Perf.Y':           '1-year return %',
+  'Perf.5Y':          '5-year return %',
+  'Perf.10Y':         '10-year return %',
+  'Perf.All':         'All-time return %',
+  'Volatility.D':     '1-day realized vol %',
+  'Volatility.W':     '1-week realized vol %',
+  'Volatility.M':     '1-month realized vol %',
+  'High.1M':          '1-month high price',
+  'Low.1M':           '1-month low price',
+  'High.3M':          '3-month high price',
+  'High.6M':          '6-month high price',
 
-  // Technicals
+  // Technicals — multi-part indicator fields use DOTS as separators
+  // (Stoch.K, MACD.macd, BB.lower, ...). Underscore variants are rejected
+  // with 'Unknown field'. Verified live against india/scan.
   RSI:                'Relative Strength Index (14)',
   RSI7:               'RSI(7)',
-  Stoch_K:            'Stochastic %K',
-  Stoch_D:            'Stochastic %D',
-  MACD_macd:          'MACD line',
-  MACD_signal:        'MACD signal line',
-  MACD_Histogram:     'MACD histogram',
+  'Stoch.K':          'Stochastic %K',
+  'Stoch.D':          'Stochastic %D',
+  'MACD.macd':        'MACD line',
+  'MACD.signal':      'MACD signal line',
+  'MACD.hist':        'MACD histogram',
   ADX:                'Average Directional Index',
   ATR:                'Average True Range',
   AO:                 'Awesome Oscillator',
   CCI20:              'Commodity Channel Index (20)',
-  BB_Lower:           'Bollinger lower band',
-  BB_Upper:           'Bollinger upper band',
+  'BB.lower':         'Bollinger lower band',
+  'BB.upper':         'Bollinger upper band',
   SMA20:              'Simple moving average (20)',
   SMA50:              'Simple moving average (50)',
   SMA200:             'Simple moving average (200)',
@@ -314,12 +325,12 @@ export const FIELDS_CATALOG = {
   EMA200:             'Exponential moving average (200)',
   VWAP:               'Volume-weighted average price',
 
-  // Composite signals (TV\'s built-in)
-  Recommend_All:      'Overall recommendation [-1, 1] (1=strong buy)',
-  Recommend_MA:       'Moving averages recommendation',
-  Recommend_Other:    'Oscillators recommendation',
+  // Composite signals (TV's built-in)
+  'Recommend.All':    'Overall recommendation [-1, 1] (1=strong buy)',
+  'Recommend.MA':     'Moving averages recommendation',
+  'Recommend.Other':  'Oscillators recommendation',
 
-  // Crypto-specific
+  // Crypto-specific — only valid on the "crypto" market scanner.
   '24h_vol|5':        '24h volume in quote currency',
   '24h_close_change|5':'24h % price change',
   market_cap_calc:    'Crypto market cap',
