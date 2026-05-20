@@ -151,18 +151,39 @@ export async function query(opts = {}) {
   const result = await evaluateAsync(expr);
 
   if (!result) {
-    return { success: false, error: 'No response from scanner endpoint', market, body };
+    return { success: false, error: 'No response from scanner endpoint', market, request: body };
   }
   if (result.fetchError) {
-    return { success: false, error: `Fetch failed: ${result.fetchError}`, market, body };
-  }
-  if (!result.ok) {
+    // The only realistic fetchError here is a CORS/CSP block. We send
+    // text/plain specifically to avoid the preflight that "application/json"
+    // would trigger — so this should not happen, but surface it clearly.
     return {
       success: false,
-      error: `Scanner returned HTTP ${result.status}`,
-      preview: result.textPreview,
+      error: `Fetch failed: ${result.fetchError}`,
+      hint: 'Network/CORS block. The scanner endpoint may be unreachable.',
       market,
-      body,
+      request: body,
+    };
+  }
+
+  // The scanner reports query problems as HTTP 400 with a JSON body:
+  //   { "totalCount": 0, "error": "<human-readable reason>", "data": null }
+  // Surface that reason verbatim — it names the exact bad field/operator,
+  // so callers can fix the query instead of retrying blindly.
+  const scannerError = result.body && typeof result.body === 'object'
+    ? result.body.error
+    : null;
+
+  if (!result.ok || scannerError) {
+    return {
+      success: false,
+      error: scannerError
+        ? `Scanner rejected query: ${scannerError}`
+        : `Scanner returned HTTP ${result.status}`,
+      http_status: result.status,
+      detail: result.textPreview || null,
+      market,
+      request: body,
     };
   }
   if (!result.body || !Array.isArray(result.body.data)) {
@@ -171,7 +192,7 @@ export async function query(opts = {}) {
       error: 'Scanner response missing data array',
       raw: result.body,
       market,
-      body,
+      request: body,
     };
   }
 
