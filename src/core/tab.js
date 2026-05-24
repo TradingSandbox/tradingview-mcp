@@ -46,12 +46,21 @@ export async function list() {
  * Open a new chart tab by clicking the "+" button in the shell window's tab strip.
  * CDP-synthesized Cmd+T does not trigger the Electron accelerator, so we invoke
  * the React onClick handler on `button.create-new-tab-button` directly.
+ *
+ * By default the new tab lands on TradingView's "new-tab" landing page, which
+ * is NOT a chart target (is_chart=false). Pass `symbol` (or `as_chart: true`)
+ * to navigate the freshly-opened tab to /chart/, so the resulting CDP target
+ * becomes a viable chart target that downstream tools can drive.
+ *
+ * Returns the new tab's CDP target_id so callers can claim/route to it
+ * without diffing tab lists themselves.
  */
-export async function newTab() {
+export async function newTab({ symbol, as_chart } = {}) {
   const shell = await findShellTarget();
   if (!shell) throw new Error('Could not find TradingView shell (tabbed-window) target. Is the desktop app running?');
 
   const before = await list();
+  const beforeIds = new Set(before.tabs.map(t => t.id));
 
   const clickResult = await withTarget(shell.id, () => evaluate(`
     (function(){
@@ -74,17 +83,63 @@ export async function newTab() {
   // Poll for the tab to appear (new-tab landing page registers as a CDP target shortly after click).
   const deadline = Date.now() + 5000;
   let after = before;
+  let newTabId = null;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 300));
     after = await list();
-    if (after.tab_count > before.tab_count) break;
+    if (after.tab_count > before.tab_count) {
+      const fresh = after.tabs.find(t => !beforeIds.has(t.id));
+      if (fresh) {
+        newTabId = fresh.id;
+        break;
+      }
+    }
   }
 
-  if (after.tab_count <= before.tab_count) {
+  if (!newTabId) {
     throw new Error('New tab click was dispatched but no new tab appeared within 5s.');
   }
 
-  return { success: true, action: 'new_tab_opened', via: clickResult.via, ...after };
+  // If the caller wants a chart (symbol supplied, or as_chart explicitly),
+  // navigate the new tab away from the new-tab landing to /chart/. Without
+  // this, downstream tools that filter by is_chart will skip the new tab.
+  const wantsChart = !!symbol || as_chart === true;
+  if (wantsChart) {
+    const chartUrl = symbol
+      ? `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`
+      : 'https://www.tradingview.com/chart/';
+    const navClient = await getClient({ targetId: newTabId });
+    await navClient.Page.navigate({ url: chartUrl });
+
+    // Wait for the tab to flip to is_chart=true.
+    const navDeadline = Date.now() + 10000;
+    while (Date.now() < navDeadline) {
+      await new Promise(r => setTimeout(r, 400));
+      const tabs = await list();
+      const updated = tabs.tabs.find(t => t.id === newTabId);
+      if (updated && updated.is_chart) {
+        return {
+          success: true,
+          action: 'new_chart_tab_opened',
+          via: clickResult.via,
+          target_id: newTabId,
+          chart_id: updated.chart_id,
+          symbol: symbol ?? null,
+          ...tabs,
+        };
+      }
+    }
+    // Navigation dispatched but the page didn't register as a chart in time —
+    // fall through and return the landing-page state so callers can decide.
+  }
+
+  return {
+    success: true,
+    action: 'new_tab_opened',
+    via: clickResult.via,
+    target_id: newTabId,
+    ...after,
+  };
 }
 
 /**

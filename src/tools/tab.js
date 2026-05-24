@@ -13,10 +13,12 @@ export function registerTabTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('tab_new', 'Open a new chart tab', {
+  server.tool('tab_new', 'Open a new chart tab. By default lands on TradingView\'s "new-tab" page (is_chart=false). Pass symbol or as_chart=true to navigate the new tab to /chart/ so it becomes a viable chart target. Returns target_id of the new tab.', {
+    symbol: z.string().optional().describe('Optional symbol to load (e.g., "NSE:NIFTY", "AAPL"). When set, the new tab is navigated to a chart for this symbol and waits until is_chart becomes true.'),
+    as_chart: z.coerce.boolean().optional().describe('If true (and no symbol given), navigate the new tab to /chart/ with TradingView\'s default symbol so it becomes a chart target.'),
     target_id: targetIdParam,
-  }, async ({ target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.newTab())); }
+  }, async ({ symbol, as_chart, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.newTab({ symbol, as_chart }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
