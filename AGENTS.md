@@ -62,6 +62,15 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 ### "Screen multiple symbols"
 - `batch_run` with `symbols: ["ES1!", "NQ1!", "YM1!"]` and `action: "screenshot"` or `"get_ohlcv"`
 
+### "Futures & options chains" (F&O)
+Derivatives data comes straight from TradingView's scanner — no UI needed. All three tools auto-detect the underlying/root from the current chart symbol; pass `underlying=`/`root=` to override.
+
+1. `options_expirations` → list an underlying's expiries FIRST (days-to-expiry, strike counts, spot). Cheap — use it to pick an expiry before pulling a chain
+2. `options_chain` → strikes × call/put with greeks (delta, gamma, theta, vega, rho) + `iv_pct`. Defaults to the nearest expiry and an ATM-centered window. Params: `expiration` (YYYYMMDD), `option_type` ("call"/"put"/"both"), `strikes` (count, 0=all), `min_strike`/`max_strike`
+3. `futures_curve` → term structure for a root (all contract months) + contango/backwardation. Root auto-derives from the chart symbol ("NYMEX:CL1!" → "NYMEX:CL"); pass `root` (EXCHANGE:CODE) or `symbol` to override
+
+Notes: `iv_pct` is a percentage; TradingView does not expose option open interest. Underlyings must be exchange-qualified ("NSE:BPCL", "NASDAQ:AAPL"); US option contracts resolve under `OPRA:`.
+
 ### "Draw on the chart"
 - `draw_shape` → horizontal_line, trend_line, rectangle, text (pass point + optional point2)
 - `draw_list` → see what's drawn

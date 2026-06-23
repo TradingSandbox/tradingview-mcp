@@ -12,6 +12,7 @@ import { registerReplayTools } from './tools/replay.js';
 import { registerIndicatorTools } from './tools/indicators.js';
 import { registerWatchlistTools } from './tools/watchlist.js';
 import { registerScreenerQueryTools } from './tools/screener_query.js';
+import { registerFnoTools } from './tools/fno.js';
 import { registerUiTools } from './tools/ui.js';
 import { registerPaneTools } from './tools/pane.js';
 import { registerTabTools } from './tools/tab.js';
@@ -23,7 +24,7 @@ const server = new McpServer(
     description: 'AI-assisted TradingView chart analysis and Pine Script development via Chrome DevTools Protocol',
   },
   {
-    instructions: `TradingView MCP — 80 tools for reading and controlling a live TradingView Desktop chart.
+    instructions: `TradingView MCP — 86 tools for reading and controlling a live TradingView Desktop chart.
 
 TOOL SELECTION GUIDE — use this to pick the right tool:
 
@@ -51,6 +52,12 @@ Pine Script development:
 - pine_set_source → inject code, pine_smart_compile → compile + check errors
 - pine_get_errors → read errors, pine_get_console → read log output
 - WARNING: pine_get_source can return 200KB+ for complex scripts — avoid unless editing
+
+Futures & Options (derivatives, served from TradingView's scanner):
+- options_expirations → list an underlying's expiries (days-to-expiry, strike counts, spot). Call this FIRST to pick an expiry
+- options_chain → strikes × call/put with greeks (delta/gamma/theta/vega/rho) + iv_pct. Defaults to nearest expiry, ATM-centered. iv_pct is a percentage; open interest is not available
+- futures_curve → term structure for a root (all contract months) + contango/backwardation. Root auto-derives from the chart symbol (NYMEX:CL1! → NYMEX:CL)
+- All three auto-detect the underlying/root from the current chart symbol; pass underlying=/root= to override
 
 Screenshots: capture_screenshot → regions: "full", "chart", "strategy_tester"
 Replay: replay_start → replay_step → replay_trade → replay_status → replay_stop
@@ -85,6 +92,7 @@ registerReplayTools(server);
 registerIndicatorTools(server);
 registerWatchlistTools(server);
 registerScreenerQueryTools(server);
+registerFnoTools(server);
 registerUiTools(server);
 registerPaneTools(server);
 registerTabTools(server);
