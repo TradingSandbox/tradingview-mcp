@@ -22,7 +22,7 @@ export function registerFnoTools(server) {
       underlying: z.string().optional().describe('Underlying symbol, exchange-qualified (e.g. "NSE:BPCL", "NASDAQ:AAPL"). Defaults to the current chart symbol.'),
       expiration: z.number().int().optional().describe('Expiration as YYYYMMDD (e.g. 20260630). Default: nearest upcoming expiration.'),
       option_type: z.enum(['call', 'put', 'both']).optional().describe('Which side(s) to return. Default "both" (calls and puts merged per strike).'),
-      strikes: z.number().int().optional().describe('Number of strikes centered on ATM to return. Default 20. Pass 0 for all (capped at 500).'),
+      strikes: z.number().int().optional().describe('Number of strikes centered on ATM to return. Default 17 (ATM ±8). Pass 0 for all (hard-capped at 250 nearest ATM).'),
       min_strike: z.number().optional().describe('Lower strike bound. Overrides `strikes` when set.'),
       max_strike: z.number().optional().describe('Upper strike bound. Overrides `strikes` when set.'),
     },
@@ -46,10 +46,11 @@ export function registerFnoTools(server) {
 
   server.tool(
     'futures_curve',
-    'Get the futures term structure (all listed contract months) for a root from TradingView\'s scanner — each contract with expiration, last price, % change and days-to-expiry, plus front/back contracts and contango/backwardation detection. Auto-detects the root from the current chart symbol (continuous like "NYMEX:CL1!" and dated like "NYMEX:CLF2027" both resolve to root "NYMEX:CL").',
+    'Get the nearest futures contract month(s) for a root from TradingView\'s scanner — each contract with expiration, last price, % change and days-to-expiry. Defaults to just the next expiry; pass months>1 (or 0 for the full curve) to get the term structure with front/back contracts and contango/backwardation. Auto-detects the root from the current chart symbol (continuous like "NYMEX:CL1!" and dated like "NYMEX:CLF2027" both resolve to root "NYMEX:CL").',
     {
       root: z.string().optional().describe('Futures root as EXCHANGE:CODE (e.g. "NYMEX:CL", "CME_MINI:ES", "NSE:BPCL"). Overrides symbol-based detection.'),
       symbol: z.string().optional().describe('Any contract/continuous symbol to derive the root from. Defaults to the current chart symbol.'),
+      months: z.number().int().optional().describe('How many nearest contract months to return. Default 1 (next expiry only). Pass 0 for the full curve.'),
     },
     async (args) => {
       try { return jsonResult(await core.futuresCurve(args)); }

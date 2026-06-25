@@ -338,7 +338,8 @@ export async function expirations(opts = {}) {
  * @param {number} [opts.expiration]   YYYYMMDD. Default: nearest upcoming expiry.
  * @param {string} [opts.option_type]  'call' | 'put' | 'both' (default 'both').
  * @param {number} [opts.strikes]      Number of strikes centered on ATM to keep.
- *                                     Default 20. Pass 0 for all (capped at 500).
+ *                                     Default 17 (ATM ±8). Pass 0 for all
+ *                                     (capped at MAX_CHAIN_STRIKES).
  * @param {number} [opts.min_strike]   Lower strike bound (overrides `strikes`).
  * @param {number} [opts.max_strike]   Upper strike bound (overrides `strikes`).
  * @returns {Promise<object>}
@@ -350,7 +351,7 @@ export async function optionsChain(opts = {}) {
   }
 
   const optionType = ['call', 'put', 'both'].includes(opts.option_type) ? opts.option_type : 'both';
-  const window = opts.strikes == null ? 20 : Math.max(0, Number(opts.strikes) || 0);
+  const window = opts.strikes == null ? 17 : Math.max(0, Number(opts.strikes) || 0); // 17 = ATM ±8
   const hasRange = Number.isFinite(opts.min_strike) || Number.isFinite(opts.max_strike);
 
   // Cheap resolution: nearest upcoming expiry + future→cash fallback in one
@@ -464,12 +465,16 @@ export async function optionsChain(opts = {}) {
 }
 
 /**
- * Read the futures term structure (all listed contract months) for a root.
+ * Read the nearest futures contract month(s) for a root. Defaults to just the
+ * next expiry; pass months>1 (or 0 for the full curve) to get the term
+ * structure with contango/backwardation.
  *
  * @param {object} opts
  * @param {string} [opts.root]    Futures root, EXCHANGE:CODE (e.g. "NYMEX:CL").
  * @param {string} [opts.symbol]  Any contract/continuous symbol to derive the
  *                                root from (default: current chart symbol).
+ * @param {number} [opts.months]  How many nearest contract months to return.
+ *                                Default 1 (next expiry only); 0 = full curve.
  * @returns {Promise<object>}
  */
 export async function futuresCurve(opts = {}) {
@@ -478,6 +483,7 @@ export async function futuresCurve(opts = {}) {
     return { success: false, error: 'No root/symbol given and no current chart symbol available.' };
   }
   const root = opts.root || deriveFuturesRoot(source);
+  const months = opts.months == null ? 1 : Math.max(0, Number(opts.months) || 0);
 
   let result;
   try {
@@ -499,7 +505,7 @@ export async function futuresCurve(opts = {}) {
     };
   }
 
-  const contracts = result.rows.map(row => {
+  const all = result.rows.map(row => {
     const d = row.d || [];
     return {
       symbol: row.s,
@@ -514,30 +520,40 @@ export async function futuresCurve(opts = {}) {
     };
   });
 
-  // Term structure from the dated contracts only (skip continuous / undated).
-  const dated = contracts.filter(c => !c.is_continuous && c.expiration != null && c.last != null);
+  // Upcoming dated contracts in calendar order (skip continuous / undated /
+  // already-expired). Default to just the nearest month; months=0 = whole curve.
+  const today = todayYmd();
+  const dated = all.filter(c => !c.is_continuous && c.expiration != null && c.expiration >= today);
+  const selected = months > 0 ? dated.slice(0, months) : dated;
+
+  // Term structure over the returned contracts — needs ≥2 priced months.
+  const priced = selected.filter(c => c.last != null);
   let structure = null, front = null, back = null, spread_pct = null;
-  if (dated.length >= 2) {
-    front = dated[0];
-    back = dated[dated.length - 1];
-    spread_pct = front.last ? round(((back.last - front.last) / front.last) * 100, 2) : null;
-    const eps = front.last * 0.0005; // 0.05% deadband for "flat"
-    structure = back.last - front.last > eps ? 'contango'
-      : front.last - back.last > eps ? 'backwardation'
-      : 'flat';
+  if (priced.length) {
+    front = priced[0];
+    if (priced.length >= 2 && front.last) {
+      back = priced[priced.length - 1];
+      spread_pct = round(((back.last - front.last) / front.last) * 100, 2);
+      const eps = front.last * 0.0005; // 0.05% deadband for "flat"
+      structure = back.last - front.last > eps ? 'contango'
+        : front.last - back.last > eps ? 'backwardation'
+        : 'flat';
+    }
   }
 
-  const currency = contracts.find(c => c.currency)?.currency ?? null;
+  const currency = all.find(c => c.currency)?.currency ?? null;
 
   return {
     success: true,
     root,
     currency,
+    months: selected.length,
+    total_available: dated.length,
     structure,
     front: front && { symbol: front.symbol, expiration: front.expiration, last: front.last },
     back: back && { symbol: back.symbol, expiration: back.expiration, last: back.last },
     spread_pct,
-    count: contracts.length,
-    contracts,
+    count: selected.length,
+    contracts: selected,
   };
 }

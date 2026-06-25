@@ -10,7 +10,7 @@ auto-detect the underlying/root from the current chart symbol; pass
 |------|---------|
 | `options_expirations` | List upcoming expiries for an underlying (pick one before pulling a chain) |
 | `options_chain` | Strikes × call/put with greeks + IV for one expiry |
-| `futures_curve` | Term structure (all contract months) for a root + contango/backwardation |
+| `futures_curve` | Nearest contract month(s) for a root; `months` for the full term structure + contango/backwardation |
 
 ## options_expirations
 
@@ -37,7 +37,7 @@ Defaults to the **nearest upcoming** expiry and an **ATM-centered** strike windo
 - `underlying?` — exchange-qualified; defaults to chart symbol. A futures symbol with no chain falls back to its cash root (`NSE:NIFTY1!` → `NSE:NIFTY`).
 - `expiration?` — `YYYYMMDD` (e.g. `20260623`). Default: nearest upcoming.
 - `option_type?` — `"call"` | `"put"` | `"both"` (default `"both"`, calls+puts merged per strike).
-- `strikes?` — count centered on ATM (default `20`; `0` = all).
+- `strikes?` — count centered on ATM (default `17`, i.e. ATM ±8; `0` = all).
 - `min_strike?` / `max_strike?` — explicit strike bounds (override `strikes`).
 
 ```json
@@ -60,30 +60,35 @@ Defaults to the **nearest upcoming** expiry and an **ATM-centered** strike windo
 
 For `option_type: "call"`/`"put"`, the result is a flat `options: [...]` array instead of merged `strikes`.
 
-**Size handling.** A request is funneled so context stays small even for deep chains (NSE:NIFTY ≈ 4.4k contracts): the scanner is filtered server-side to one underlying + one expiry; only that expiry's ladder crosses CDP; output is then windowed to `strikes` (default 20, ATM-centered). `strikes: 0` returns the full ladder up to a hard ceiling of **250 strikes** nearest ATM — when that trips, the result carries `strikes_capped: 250`, `truncated: true` and a `note`. Use `options_expirations` (≈1.6 KB) to browse expiries rather than widening the chain.
+**Size handling.** A request is funneled so context stays small even for deep chains (NSE:NIFTY ≈ 4.4k contracts): the scanner is filtered server-side to one underlying + one expiry; only that expiry's ladder crosses CDP; output is then windowed to `strikes` (default 17 = ATM ±8). `strikes: 0` returns the full ladder up to a hard ceiling of **250 strikes** nearest ATM — when that trips, the result carries `strikes_capped: 250`, `truncated: true` and a `note`. Use `options_expirations` (≈1.6 KB) to browse expiries rather than widening the chain.
 
 ## futures_curve
+
+Defaults to **just the next expiry**. Pass `months` for more (or `0` for the full curve + term-structure analysis).
 
 **Params:**
 - `root?` — `EXCHANGE:CODE` (e.g. `NYMEX:CL`, `CME_MINI:ES`, `NSE:NIFTY`). Overrides detection.
 - `symbol?` — any contract/continuous symbol to derive the root from; defaults to chart symbol. `NYMEX:CL1!` and `NYMEX:CLF2027` both → `NYMEX:CL`.
+- `months?` — number of nearest contract months to return (default `1`; `0` = full curve).
 
 ```json
+// futures_curve({ root: "NYMEX:CL" })  → next expiry only (~0.4 KB)
 {
   "success": true, "root": "NYMEX:CL", "currency": "USD",
-  "structure": "backwardation", "spread_pct": -27.45,
-  "front": { "symbol": "NYMEX:CLN2026", "expiration": 20260622, "last": 76.09 },
-  "back":  { "symbol": "NYMEX:CLG2037", "expiration": 20370120, "last": 55.2 },
-  "count": 129,
+  "months": 1, "total_available": 127,
+  "structure": null, "spread_pct": null,
+  "front": { "symbol": "NYMEX:CLQ2026", "expiration": 20260721, "last": 75.36 },
+  "back": null,
+  "count": 1,
   "contracts": [
-    { "symbol": "NYMEX:CLN2026", "description": "Crude Oil Futures (Jul 2026)",
-      "expiration": 20260622, "last": 76.09, "change_pct": 0.05,
-      "days_to_expiry": 5, "is_continuous": false }
+    { "symbol": "NYMEX:CLQ2026", "description": "Crude Oil Futures (Aug 2026)",
+      "expiration": 20260721, "last": 75.36, "change_pct": 0.12,
+      "days_to_expiry": 26, "is_continuous": false }
   ]
 }
 ```
 
-`structure` compares the front vs back dated contract: `contango` (back > front), `backwardation` (back < front), or `flat`. Continuous contracts (`…1!`, null expiration) are listed but excluded from the structure calc.
+With `months ≥ 2` (or `0`), `structure` compares the front vs back of the returned contracts: `contango` (back > front), `backwardation` (back < front), or `flat`. Only **upcoming** dated contracts are returned; continuous (`…1!`) and expired contracts are excluded. `total_available` reports how many upcoming months exist.
 
 ## Notes
 
