@@ -69,12 +69,11 @@ Calls and puts are always returned merged per strike.
 Defaults to **just the next expiry**. Pass `months` for more (or `0` for the full curve + term-structure analysis).
 
 **Params:**
-- `root?` — `EXCHANGE:CODE` (e.g. `NYMEX:CL`, `CME_MINI:ES`, `NSE:NIFTY`). Overrides detection.
-- `symbol?` — any contract/continuous symbol to derive the root from; defaults to chart symbol. `NYMEX:CL1!` and `NYMEX:CLF2027` both → `NYMEX:CL`.
+- `symbol?` — a futures root (`EXCHANGE:CODE`, e.g. `NYMEX:CL`, `CME_MINI:ES`, `NSE:NIFTY`) **or** any contract/continuous symbol; the root is derived automatically (`NYMEX:CL1!` and `NYMEX:CLF2027` both → `NYMEX:CL`). Defaults to the chart symbol.
 - `months?` — number of nearest contract months to return (default `1`; `0` = full curve).
 
 ```json
-// futures_curve({ root: "NYMEX:CL" })  → next expiry only (~0.4 KB)
+// futures_curve({ symbol: "NYMEX:CL" })  → next expiry only (~0.4 KB)
 {
   "success": true, "root": "NYMEX:CL", "currency": "USD",
   "months": 1, "total_available": 127,

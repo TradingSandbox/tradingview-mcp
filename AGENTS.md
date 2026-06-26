@@ -67,7 +67,7 @@ Derivatives data comes straight from TradingView's scanner — no UI needed. All
 
 1. `options_expirations` → list an underlying's expiries FIRST (days-to-expiry, strike counts, spot). Returns the nearest 4 by default; pass `limit` (0=all). Cheap — use it to pick an expiry before pulling a chain
 2. `options_chain` → strikes × call/put with greeks (delta, gamma, theta, vega, rho) + `iv_pct`, merged per strike. Defaults to the nearest expiry and ATM ±8 strikes. Params: `expiration` (YYYYMMDD), `strikes` (count centered on ATM, default 17, 0=all)
-3. `futures_curve` → nearest contract month(s) for a root. Defaults to the next expiry only; pass `months` (>1, or 0 for the full curve) to get the term structure + contango/backwardation. Root auto-derives from the chart symbol ("NYMEX:CL1!" → "NYMEX:CL"); pass `root` (EXCHANGE:CODE) or `symbol` to override
+3. `futures_curve` → nearest contract month(s) for a root. Defaults to the next expiry only; pass `months` (>1, or 0 for the full curve) to get the term structure + contango/backwardation. Root auto-derives from the chart symbol ("NYMEX:CL1!" → "NYMEX:CL"); pass `symbol` (a root like "NYMEX:CL" or any contract) to override
 
 Notes: `iv_pct` is a percentage; TradingView does not expose option open interest. Underlyings must be exchange-qualified ("NSE:BPCL", "NASDAQ:AAPL"); US option contracts resolve under `OPRA:`.
 

@@ -56,7 +56,7 @@ Pine Script development:
 Futures & Options (derivatives, served from TradingView's scanner):
 - options_expirations → list an underlying's expiries (days-to-expiry, strike counts, spot). Nearest 4 by default (limit= to change, 0=all). Call this FIRST to pick an expiry
 - options_chain → strikes × call/put with greeks (delta/gamma/theta/vega/rho) + iv_pct. Defaults to nearest expiry + ATM ±8 strikes (strikes= to widen, 0=all). iv_pct is a percentage; open interest is not available
-- futures_curve → nearest contract month(s) for a root; defaults to the next expiry only (months= for more, 0 for the full curve + contango/backwardation). Root auto-derives from the chart symbol (NYMEX:CL1! → NYMEX:CL)
+- futures_curve → nearest contract month(s) for a root; defaults to the next expiry only (months= for more, 0 for the full curve + contango/backwardation). Root auto-derives from the chart symbol (NYMEX:CL1! → NYMEX:CL); pass symbol= (a root or any contract) to override
 - All three auto-detect the underlying/root from the current chart symbol; pass underlying=/root= to override
 
 Screenshots: capture_screenshot → regions: "full", "chart", "strategy_tester"

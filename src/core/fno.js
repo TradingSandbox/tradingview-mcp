@@ -455,19 +455,19 @@ export async function optionsChain(opts = {}) {
  * structure with contango/backwardation.
  *
  * @param {object} opts
- * @param {string} [opts.root]    Futures root, EXCHANGE:CODE (e.g. "NYMEX:CL").
- * @param {string} [opts.symbol]  Any contract/continuous symbol to derive the
+ * @param {string} [opts.symbol]  A futures root (EXCHANGE:CODE, e.g. "NYMEX:CL")
+ *                                or any contract/continuous symbol to derive the
  *                                root from (default: current chart symbol).
  * @param {number} [opts.months]  How many nearest contract months to return.
  *                                Default 1 (next expiry only); 0 = full curve.
  * @returns {Promise<object>}
  */
 export async function futuresCurve(opts = {}) {
-  const source = opts.root || opts.symbol || (await getCurrentSymbol());
+  const source = opts.symbol || (await getCurrentSymbol());
   if (!source) {
-    return { success: false, error: 'No root/symbol given and no current chart symbol available.' };
+    return { success: false, error: 'No symbol given and no current chart symbol available.' };
   }
-  const root = opts.root || deriveFuturesRoot(source);
+  const root = deriveFuturesRoot(source);
   const months = opts.months == null ? 1 : Math.max(0, Number(opts.months) || 0);
 
   let result;
@@ -486,7 +486,7 @@ export async function futuresCurve(opts = {}) {
     return {
       success: false,
       root,
-      error: `No futures contracts found for root "${root}". Roots are EXCHANGE:CODE, e.g. "NYMEX:CL", "CME_MINI:ES", "NSE:BPCL". Pass root= to override.`,
+      error: `No futures contracts found for root "${root}". Pass symbol= as a futures root or contract, e.g. "NYMEX:CL", "CME_MINI:ES", "NSE:BPCL".`,
     };
   }
 
