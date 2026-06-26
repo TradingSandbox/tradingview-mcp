@@ -13,6 +13,9 @@
 import { z } from 'zod';
 import { jsonResult } from './_format.js';
 import * as core from '../core/fno.js';
+import { withTarget } from '../connection.js';
+
+const targetIdParam = z.string().optional().describe('Optional CDP target id from target_list/tv_health_check. The chart symbol is auto-detected from that TradingView window/tab when underlying/symbol is omitted.');
 
 export function registerFnoTools(server) {
   server.tool(
@@ -22,9 +25,10 @@ export function registerFnoTools(server) {
       underlying: z.string().optional().describe('Underlying symbol, exchange-qualified (e.g. "NSE:BPCL", "NASDAQ:AAPL"). Defaults to the current chart symbol.'),
       expiration: z.number().int().optional().describe('Expiration as YYYYMMDD (e.g. 20260630). Default: nearest upcoming expiration.'),
       strikes: z.number().int().optional().describe('Number of strikes centered on ATM to return. Default 17 (ATM ±8). Pass 0 for all (hard-capped at 250 nearest ATM).'),
+      target_id: targetIdParam,
     },
-    async (args) => {
-      try { return jsonResult(await core.optionsChain(args)); }
+    async ({ target_id, ...args }) => {
+      try { return jsonResult(await withTarget(target_id, () => core.optionsChain(args))); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );
@@ -35,9 +39,10 @@ export function registerFnoTools(server) {
     {
       underlying: z.string().optional().describe('Underlying symbol, exchange-qualified (e.g. "NSE:BPCL", "NASDAQ:AAPL"). Defaults to the current chart symbol.'),
       limit: z.number().int().optional().describe('How many nearest expiries to return. Default 4. Pass 0 for all upcoming.'),
+      target_id: targetIdParam,
     },
-    async (args) => {
-      try { return jsonResult(await core.expirations(args)); }
+    async ({ target_id, ...args }) => {
+      try { return jsonResult(await withTarget(target_id, () => core.expirations(args))); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );
@@ -48,9 +53,10 @@ export function registerFnoTools(server) {
     {
       symbol: z.string().optional().describe('A futures root (EXCHANGE:CODE, e.g. "NYMEX:CL", "CME_MINI:ES", "NSE:BPCL") or any contract/continuous symbol (e.g. "NYMEX:CL1!", "MCX:GOLD1!") — the root is derived automatically. Defaults to the current chart symbol.'),
       months: z.number().int().optional().describe('How many nearest contract months to return. Default 1 (next expiry only). Pass 0 for the full curve.'),
+      target_id: targetIdParam,
     },
-    async (args) => {
-      try { return jsonResult(await core.futuresCurve(args)); }
+    async ({ target_id, ...args }) => {
+      try { return jsonResult(await withTarget(target_id, () => core.futuresCurve(args))); }
       catch (err) { return jsonResult({ success: false, error: err.message }, true); }
     }
   );
