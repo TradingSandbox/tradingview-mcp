@@ -215,7 +215,7 @@ Claude reads [`CLAUDE.md`](CLAUDE.md) automatically when working in this project
 | "Draw a level at 24500" | `draw_shape` (horizontal_line) |
 | "Take a screenshot" | `capture_screenshot` |
 
-## Tool Reference (78 MCP tools)
+## Tool Reference (82 MCP tools)
 
 ### Chart Reading
 
@@ -310,6 +310,17 @@ Read `line.new()`, `label.new()`, `table.new()`, `box.new()` output from any vis
 | `tv_launch` / `tv_health_check` / `tv_discover` | Connection management |
 | `target_list` / `target_switch` | List and switch between TradingView Desktop CDP windows/targets |
 
+### Fundamentals, Technicals & News
+
+Served straight from TradingView's scanner / news service (in-page fetch over CDP, no UI). All auto-detect the symbol from the current chart; pass `symbol=` to override.
+
+| Tool | What it does |
+|------|-------------|
+| `fundamentals_get` | One-symbol snapshot: valuation (mkt cap, EV, P/E, PEG, P/B, P/S, P/FCF, EV/EBITDA, beta), profitability margins + ROE/ROA/ROIC, growth (rev & EPS YoY), health (debt/equity, current/quick ratio), dividends, per-share, sector/industry, next earnings |
+| `technicals_get` | One-symbol snapshot: TradingView buy/sell rating (Strong Buy…Strong Sell + MA/oscillator sub-ratings), oscillators (RSI, Stoch, MACD, CCI, AO, Momentum, ADX), moving averages (SMA/EMA 20/50/200, VWAP), volatility (ATR, Bollinger). `timeframe=` for intraday/weekly/monthly. Snapshot data, not tick-by-tick |
+| `news_list` | Recent headlines for a symbol (id, title, provider, age, urgency, related symbols) — bodies not included |
+| `news_read` | Full article body (plain text) for one headline id from `news_list` |
+
 ### Multiple Windows and Monitors
 
 TradingView Desktop exposes each chart window/tab as a CDP target. When you run separate chart windows across multiple monitors, MCP commands operate on the currently connected target only.
@@ -364,7 +375,7 @@ npm test
 Claude Code  ←→  MCP Server (stdio)  ←→  CDP (port 9222)  ←→  TradingView Desktop (Electron)
 ```
 
-- **Transport**: MCP over stdio (80 tools) + CLI (`tv` command, 31 commands with 66 subcommands)
+- **Transport**: MCP over stdio (84 tools) + CLI (`tv` command, 31 commands with 66 subcommands)
 - **Connection**: Chrome DevTools Protocol on localhost:9222
 - **Streaming**: Poll-and-diff loop with deduplication, JSONL output to stdout
 - **No dependencies** beyond `@modelcontextprotocol/sdk` and `chrome-remote-interface`

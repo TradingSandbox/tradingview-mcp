@@ -1,6 +1,6 @@
 # TradingView MCP — Claude Instructions
 
-70 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+74 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
 
@@ -71,6 +71,28 @@ Derivatives data comes straight from TradingView's scanner — no UI needed. All
 
 Notes: `iv_pct` is a percentage; TradingView does not expose option open interest. Underlyings must be exchange-qualified ("NSE:BPCL", "NASDAQ:AAPL"); US option contracts resolve under `OPRA:`.
 
+### "Company fundamentals" (valuation, profitability, financials)
+Served straight from TradingView's scanner — no UI. Auto-detects the symbol from the current chart; pass `symbol=` to override.
+
+- `fundamentals_get` → one-symbol snapshot bucketed into valuation (market cap, EV, P/E, PEG, P/B, P/S, P/FCF, EV/EBITDA, beta), profitability (gross/operating/net/FCF margin, ROE, ROA, ROIC — all percentages), growth (revenue & EPS YoY %), financial health (debt/equity, current/quick ratio), dividends (yield/payout %, per-share), per-share (EPS diluted/basic, book value), classification (sector, industry, employees) and the next earnings date.
+
+Notes: percentage fields (margins, returns, growth, yields) are already in percent (47.86 = 47.86%); `market_cap`/`enterprise_value` carry a compact `*_abbr` string ("4.04T"); null fields are normal (a non-payer has no dividend yield). If the chart's exchange prefix doesn't match the scanner listing (e.g. "BATS:CDNL" → "NASDAQ:CDNL") it auto-resolves and echoes the original as `requested_symbol`.
+
+### "Technical readings / rating for a stock"
+Served from TradingView's scanner — no UI, no chart indicators needed. Auto-detects the symbol from the current chart; pass `symbol=` to override.
+
+- `technicals_get` → one-symbol snapshot: TradingView's overall buy/sell `rating` (Strong Buy/Buy/Neutral/Sell/Strong Sell, with `moving_averages` + `oscillators` sub-ratings, each a score in [-1,1]), oscillators (RSI, RSI7, Stoch %K/%D, MACD line/signal/hist, CCI, AO, Momentum, ADX), moving averages (SMA & EMA 20/50/200, VWAP) and volatility (ATR, Bollinger upper/lower). Defaults to daily; pass `timeframe=` (minutes "1"/"15"/"60"/"240", "D", "W", "M").
+
+IMPORTANT — freshness: scanner technicals are a PERIODIC SNAPSHOT (refreshed ~per-minute during market hours, plus any data-subscription delay), NOT tick-by-tick. For tick-accurate readings of an indicator that's already on the chart, use `data_get_study_values`. Same exchange-prefix fallback as fundamentals.
+
+### "News for my symbol"
+Headlines and full stories from TradingView's news service — no UI. Auto-detects the symbol from the current chart; works for stocks, futures, forex, crypto, indices.
+
+1. `news_list` → recent headlines (id, title, provider, relative age, urgency, related symbols). Cheap — bodies NOT included. Pass `limit` (default 20, cap 50)
+2. `news_read` → full article body (plain text) for one headline `id` from `news_list`. Fetch headlines first, then read the ones you want.
+
+Rule: `news_list` first (cheap), then `news_read` only the stories you need — never expect bodies in `news_list`.
+
 ### "Draw on the chart"
 - `draw_shape` → horizontal_line, trend_line, rectangle, text (pass point + optional point2)
 - `draw_list` → see what's drawn
@@ -126,6 +148,10 @@ These tools can return large payloads. Follow these rules to avoid context bloat
 | `data_get_pine_boxes` | ~1-2 KB per study (deduplicated zones) |
 | `data_get_ohlcv` (summary) | ~500 bytes |
 | `data_get_ohlcv` (100 bars) | ~8 KB |
+| `fundamentals_get` | ~1 KB (one bucketed snapshot) |
+| `technicals_get` | ~1 KB (one bucketed snapshot) |
+| `news_list` | ~1-3 KB (20 headlines, no bodies) |
+| `news_read` | ~1-5 KB per story (full body) |
 | `capture_screenshot` | ~300 bytes (returns file path, not image data) |
 
 ## Tool Conventions

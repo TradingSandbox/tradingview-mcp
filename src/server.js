@@ -13,6 +13,9 @@ import { registerIndicatorTools } from './tools/indicators.js';
 import { registerWatchlistTools } from './tools/watchlist.js';
 import { registerScreenerQueryTools } from './tools/screener_query.js';
 import { registerFnoTools } from './tools/fno.js';
+import { registerFundamentalsTools } from './tools/fundamentals.js';
+import { registerTechnicalsTools } from './tools/technicals.js';
+import { registerNewsTools } from './tools/news.js';
 import { registerUiTools } from './tools/ui.js';
 import { registerPaneTools } from './tools/pane.js';
 import { registerTabTools } from './tools/tab.js';
@@ -24,7 +27,7 @@ const server = new McpServer(
     description: 'AI-assisted TradingView chart analysis and Pine Script development via Chrome DevTools Protocol',
   },
   {
-    instructions: `TradingView MCP — 86 tools for reading and controlling a live TradingView Desktop chart.
+    instructions: `TradingView MCP — 90 tools for reading and controlling a live TradingView Desktop chart.
 
 TOOL SELECTION GUIDE — use this to pick the right tool:
 
@@ -58,6 +61,16 @@ Futures & Options (derivatives, served from TradingView's scanner):
 - options_chain → strikes × call/put with greeks (delta/gamma/theta/vega/rho) + iv_pct. Defaults to nearest expiry + ATM ±8 strikes (strikes= to widen, 0=all). iv_pct is a percentage; open interest is not available
 - futures_curve → nearest contract month(s) for a root; defaults to the next expiry only (months= for more, 0 for the full curve + contango/backwardation). Root auto-derives from the chart symbol (NYMEX:CL1! → NYMEX:CL); pass symbol= (a root or any contract) to override
 - All three auto-detect the underlying/root from the current chart symbol; pass underlying= (options) / symbol= (futures) to override
+
+Fundamental analysis (company financials, from TradingView's scanner):
+- fundamentals_get → one-symbol snapshot: valuation (mkt cap, EV, P/E, PEG, P/B, P/S, P/FCF, EV/EBITDA, beta), profitability margins + ROE/ROA/ROIC (percentages), growth (revenue & EPS YoY %), health (debt/equity, current/quick ratio), dividends (yield/payout %, per-share), per-share (EPS, book value), sector/industry, next earnings date. Auto-detects the chart symbol; pass symbol= to override
+
+Technical analysis (indicator readings + ratings, from TradingView's scanner):
+- technicals_get → one-symbol snapshot: TradingView's overall buy/sell rating (Strong Buy…Strong Sell, with MA + oscillator sub-ratings), oscillators (RSI, Stoch, MACD, CCI, AO, Momentum, ADX), moving averages (SMA/EMA 20/50/200, VWAP), volatility (ATR, Bollinger). Defaults to daily; pass timeframe= ("60","240","D","W","M"). Auto-detects the chart symbol. NOTE: snapshot data (refreshed ~per-minute + subscription delay), not tick-by-tick — use data_get_study_values for tick-accurate chart indicator readings
+
+News (symbol/market news, from TradingView's news service):
+- news_list → recent headlines for a symbol (id, title, provider, age, urgency, related symbols). Cheap — bodies NOT included. Auto-detects the chart symbol; pass symbol= / limit= (default 20, cap 50)
+- news_read → full article body (plain text) for one headline id from news_list. Lazy, so news_list stays small
 
 Screenshots: capture_screenshot → regions: "full", "chart", "strategy_tester"
 Replay: replay_start → replay_step → replay_trade → replay_status → replay_stop
@@ -93,6 +106,9 @@ registerIndicatorTools(server);
 registerWatchlistTools(server);
 registerScreenerQueryTools(server);
 registerFnoTools(server);
+registerFundamentalsTools(server);
+registerTechnicalsTools(server);
+registerNewsTools(server);
 registerUiTools(server);
 registerPaneTools(server);
 registerTabTools(server);
