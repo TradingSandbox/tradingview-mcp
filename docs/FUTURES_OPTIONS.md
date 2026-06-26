@@ -4,7 +4,7 @@ Three tools that read derivatives data straight from TradingView's public
 scanner (`scanner.tradingview.com/<options|futures>/scan`), run as an in-page
 `fetch()` over CDP — same path as the screener, no UI required. All three
 auto-detect the underlying/root from the current chart symbol; pass
-`underlying=` / `root=` to override.
+`underlying=` (options) / `symbol=` (futures) to override.
 
 | Tool | Purpose |
 |------|---------|

@@ -5,7 +5,7 @@
  * Three tools:
  *   - options_chain        : strikes × call/put with greeks + IV for an expiry
  *   - options_expirations  : cheap discovery — list expiries before pulling a chain
- *   - futures_curve        : the term structure (all contract months) for a root
+ *   - futures_curve        : the nearest contract month(s) for a root (term structure via months=)
  *
  * Like the screener_query family, these bypass the UI entirely and auto-detect
  * the underlying / root from the current chart symbol when not specified.
