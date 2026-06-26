@@ -64,6 +64,8 @@ The three `rating` blocks are TradingView's own composite recommendations
   `null`.
 - **Symbol resolution.** Like `fundamentals_get`, a chart exchange prefix that
   doesn't match the scanner listing (`BATS:CDNL` → `NASDAQ:CDNL`) auto-resolves
-  and echoes the original as `requested_symbol`.
+  and echoes the original as `requested_symbol`. Exchanges that aren't in the
+  market map (e.g. **MCX** commodity futures) resolve via the scanner's `global`
+  superset market, so `MCX:GOLD1!`, `MCX:CRUDEOIL1!` etc. work.
 - This is a **global** tool: it hits a REST endpoint, so `target_id` only
   selects the window whose chart symbol is auto-detected.

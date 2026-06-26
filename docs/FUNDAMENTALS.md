@@ -50,7 +50,10 @@ auto-detects the symbol from the current chart; pass `symbol=` to override.
 - **Symbol resolution.** If the chart's exchange prefix doesn't match the
   scanner's canonical listing (e.g. chart `BATS:CDNL` vs scanner `NASDAQ:CDNL`),
   the tool retries by bare ticker and returns the resolved `symbol`, echoing the
-  original as `requested_symbol`.
+  original as `requested_symbol`. Exchanges not in the market map (e.g. MCX)
+  resolve via the scanner's `global` superset market. (Fundamentals fields are
+  mostly `null` for non-equities like futures — they have no financial
+  statements.)
 - This is a **global** tool (like `screener_*` and the F&O tools): it hits a
   REST endpoint, so it ignores `target_id` except to pick the window whose chart
   symbol is auto-detected.

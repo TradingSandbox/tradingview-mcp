@@ -100,18 +100,40 @@ export async function scanRowByName(market, ticker, columns) {
   return { symbol: row.s, map };
 }
 
+// "global" is a universal superset scanner market (US/intl stocks, crypto,
+// forex, futures incl. MCX/commodity contracts). We fall back to it whenever
+// the exchange-derived market has no row, which covers exchanges that
+// exchangeToMarket() doesn't map (e.g. MCX → falls back to "america" → empty).
+const GLOBAL_MARKET = 'global';
+
 /**
- * Resolve a symbol's columns: try the exact ticker, then fall back to a
- * bare-ticker name match if the exchange prefix didn't resolve. Returns
- * { symbol, map } (symbol = the resolved one, possibly different from input),
- * or null if nothing matched.
+ * Resolve a symbol's columns, most-specific to most-general:
+ *   1. exact ticker in the exchange-derived market
+ *   2. exact ticker in the "global" superset market (catches unmapped
+ *      exchanges like MCX)
+ *   3. bare-ticker name match in the derived market, then in global
+ *      (catches exchange-prefix mismatches, e.g. BATS:CDNL → NASDAQ:CDNL)
+ * Returns { symbol, map } (symbol = the resolved one, possibly different from
+ * input), or null if nothing matched.
  */
 export async function resolveRow(market, symbol, columns) {
-  const m = await scanRow(market, symbol, columns);
-  if (m) return { symbol, map: m };
+  const exact = await scanRow(market, symbol, columns);
+  if (exact) return { symbol, map: exact };
+
+  if (market !== GLOBAL_MARKET) {
+    const exactGlobal = await scanRow(GLOBAL_MARKET, symbol, columns);
+    if (exactGlobal) return { symbol, map: exactGlobal };
+  }
+
   const bareTicker = String(symbol).split(':').pop();
   const byName = await scanRowByName(market, bareTicker, columns);
   if (byName) return { symbol: byName.symbol || symbol, map: byName.map };
+
+  if (market !== GLOBAL_MARKET) {
+    const byNameGlobal = await scanRowByName(GLOBAL_MARKET, bareTicker, columns);
+    if (byNameGlobal) return { symbol: byNameGlobal.symbol || symbol, map: byNameGlobal.map };
+  }
+
   return null;
 }
 
