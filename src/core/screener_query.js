@@ -41,8 +41,10 @@ const MAX_RANGE = 500;
 /**
  * Map a TradingView symbol's exchange prefix to a scanner market slug.
  * Falls back to "america" — the largest universe — if nothing matches.
+ * Exported so the F&O module (core/fno.js) can reuse it for spot-price
+ * lookups without duplicating the exchange table.
  */
-function exchangeToMarket(symbol) {
+export function exchangeToMarket(symbol) {
   if (!symbol) return 'america';
   const exch = String(symbol).split(':')[0]?.toUpperCase() || '';
   const map = {
