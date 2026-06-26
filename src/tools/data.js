@@ -45,8 +45,8 @@ export function registerDataTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('quote_get', 'Get real-time quote data for a symbol (price, OHLC, volume)', {
-    symbol: z.string().optional().describe('Symbol to quote (blank = current chart symbol)'),
+  server.tool('quote_get', 'Get a quote (price, OHLC, volume) for a symbol. For the CURRENT chart symbol (or blank) it reads the live chart series — tick-level realtime (source:"chart"). For any OTHER symbol it returns that symbol\'s data from TradingView\'s scanner — a ~per-minute snapshot (source:"scanner"), so multiple different symbols resolve correctly. Works for stocks, futures (incl. MCX commodities), forex, crypto.', {
+    symbol: z.string().optional().describe('Symbol to quote, exchange-qualified (e.g. "MCX:GOLD1!", "NASDAQ:AAPL"). Blank = current chart symbol (realtime).'),
     target_id: targetIdParam,
   }, async ({ symbol, target_id }) => {
     try { return jsonResult(await withTarget(target_id, () => core.getQuote({ symbol }))); }
