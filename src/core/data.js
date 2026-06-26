@@ -2,6 +2,7 @@
  * Core data access logic.
  */
 import { evaluate, evaluateAsync, KNOWN_PATHS, safeString } from '../connection.js';
+import { resolveRow, getCurrentSymbol } from './_scanner.js';
 
 const MAX_OHLCV_BARS = 500;
 const MAX_TRADES = 20;
@@ -243,38 +244,76 @@ export async function getEquity() {
 }
 
 export async function getQuote({ symbol } = {}) {
-  const data = await evaluate(`
-    (function() {
-      var api = ${CHART_API};
-      var sym = ${safeString(symbol || '')};
-      if (!sym) { try { sym = api.symbol(); } catch(e) {} }
-      if (!sym) { try { sym = api.symbolExt().symbol; } catch(e) {} }
-      var ext = {};
-      try { ext = api.symbolExt() || {}; } catch(e) {}
-      var bars = ${BARS_PATH};
-      var quote = { symbol: sym };
-      if (bars && typeof bars.lastIndex === 'function') {
-        var last = bars.valueAt(bars.lastIndex());
-        if (last) { quote.time = last[0]; quote.open = last[1]; quote.high = last[2]; quote.low = last[3]; quote.close = last[4]; quote.last = last[4]; quote.volume = last[5] || 0; }
-      }
-      try {
-        var bidEl = document.querySelector('[class*="bid"] [class*="price"], [class*="dom-"] [class*="bid"]');
-        var askEl = document.querySelector('[class*="ask"] [class*="price"], [class*="dom-"] [class*="ask"]');
-        if (bidEl) quote.bid = parseFloat(bidEl.textContent.replace(/[^0-9.\\-]/g, ''));
-        if (askEl) quote.ask = parseFloat(askEl.textContent.replace(/[^0-9.\\-]/g, ''));
-      } catch(e) {}
-      try {
-        var hdr = document.querySelector('[class*="headerRow"] [class*="last-"]');
-        if (hdr) { var hdrPrice = parseFloat(hdr.textContent.replace(/[^0-9.\\-]/g, '')); if (!isNaN(hdrPrice)) quote.header_price = hdrPrice; }
-      } catch(e) {}
-      if (ext.description) quote.description = ext.description;
-      if (ext.exchange) quote.exchange = ext.exchange;
-      if (ext.type) quote.type = ext.type;
-      return quote;
-    })()
-  `);
-  if (!data || (!data.last && !data.close)) throw new Error('Could not retrieve quote. The chart may still be loading.');
-  return { success: true, ...data };
+  // The chart's main series only holds ONE symbol. Reading its bars for a
+  // DIFFERENT symbol would silently return the chart symbol's price (the
+  // "all returning the same stub" bug). So: serve the current chart symbol
+  // from the live chart bars (tick-level), and any OTHER symbol from the
+  // scanner (a ~per-minute snapshot, but actually that symbol's data).
+  const currentSym = await getCurrentSymbol();
+  const wantScanner = symbol && symbol !== currentSym;
+
+  if (!wantScanner) {
+    const data = await evaluate(`
+      (function() {
+        var api = ${CHART_API};
+        var sym = ${safeString(symbol || '')};
+        if (!sym) { try { sym = api.symbol(); } catch(e) {} }
+        if (!sym) { try { sym = api.symbolExt().symbol; } catch(e) {} }
+        var ext = {};
+        try { ext = api.symbolExt() || {}; } catch(e) {}
+        var bars = ${BARS_PATH};
+        var quote = { symbol: sym };
+        if (bars && typeof bars.lastIndex === 'function') {
+          var last = bars.valueAt(bars.lastIndex());
+          if (last) { quote.time = last[0]; quote.open = last[1]; quote.high = last[2]; quote.low = last[3]; quote.close = last[4]; quote.last = last[4]; quote.volume = last[5] || 0; }
+        }
+        try {
+          var bidEl = document.querySelector('[class*="bid"] [class*="price"], [class*="dom-"] [class*="bid"]');
+          var askEl = document.querySelector('[class*="ask"] [class*="price"], [class*="dom-"] [class*="ask"]');
+          if (bidEl) quote.bid = parseFloat(bidEl.textContent.replace(/[^0-9.\\-]/g, ''));
+          if (askEl) quote.ask = parseFloat(askEl.textContent.replace(/[^0-9.\\-]/g, ''));
+        } catch(e) {}
+        try {
+          var hdr = document.querySelector('[class*="headerRow"] [class*="last-"]');
+          if (hdr) { var hdrPrice = parseFloat(hdr.textContent.replace(/[^0-9.\\-]/g, '')); if (!isNaN(hdrPrice)) quote.header_price = hdrPrice; }
+        } catch(e) {}
+        if (ext.description) quote.description = ext.description;
+        if (ext.exchange) quote.exchange = ext.exchange;
+        if (ext.type) quote.type = ext.type;
+        return quote;
+      })()
+    `);
+    if (!data || (!data.last && !data.close)) throw new Error('Could not retrieve quote. The chart may still be loading.');
+    return { success: true, source: 'chart', ...data };
+  }
+
+  // Off-chart symbol → scanner. The "global" market is a universal superset
+  // (US/intl stocks, crypto, forex, futures incl. MCX commodities). resolveRow
+  // also handles an exchange-prefix mismatch by retrying on the bare ticker.
+  const cols = ['close', 'open', 'high', 'low', 'volume', 'change', 'description', 'exchange', 'type'];
+  const resolved = await resolveRow('global', symbol, cols);
+  if (!resolved) {
+    throw new Error(`No quote found for "${symbol}" on TradingView's scanner. Check it is exchange-qualified (e.g. "MCX:GOLD1!", "NASDAQ:AAPL", "NSE:RELIANCE").`);
+  }
+  const d = resolved.map;
+  const changePct = Number.isFinite(Number(d.change)) ? Math.round(Number(d.change) * 100) / 100 : null;
+  return {
+    success: true,
+    source: 'scanner',
+    note: 'Snapshot from TradingView scanner (~per-minute, may lag realtime). Load the symbol on the chart for tick-level data.',
+    symbol: resolved.symbol,
+    ...(resolved.symbol !== symbol && { requested_symbol: symbol }),
+    open: d.open ?? null,
+    high: d.high ?? null,
+    low: d.low ?? null,
+    close: d.close ?? null,
+    last: d.close ?? null,
+    volume: d.volume ?? 0,
+    change_pct: changePct,
+    description: d.description ?? undefined,
+    exchange: d.exchange ?? undefined,
+    type: d.type ?? undefined,
+  };
 }
 
 export async function getDepth() {
