@@ -34,9 +34,10 @@ export function registerFnoTools(server) {
 
   server.tool(
     'options_expirations',
-    'List upcoming option expirations for an underlying (expired ones excluded), with days-to-expiry, strike counts (calls/puts), the underlying spot price and overall strike range. Discovery call — use it to choose an expiration before pulling a full chain with options_chain. Auto-detects the underlying from the current chart symbol; a futures symbol falls back to its cash root.',
+    'List upcoming option expirations for an underlying (expired ones excluded), with days-to-expiry, strike counts (calls/puts), the underlying spot price and overall strike range. Returns the nearest 4 expiries by default. Discovery call — use it to choose an expiration before pulling a full chain with options_chain. Auto-detects the underlying from the current chart symbol; a futures symbol falls back to its cash root.',
     {
       underlying: z.string().optional().describe('Underlying symbol, exchange-qualified (e.g. "NSE:BPCL", "NASDAQ:AAPL"). Defaults to the current chart symbol.'),
+      limit: z.number().int().optional().describe('How many nearest expiries to return. Default 4. Pass 0 for all upcoming.'),
     },
     async (args) => {
       try { return jsonResult(await core.expirations(args)); }

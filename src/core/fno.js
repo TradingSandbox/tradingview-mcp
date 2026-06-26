@@ -268,6 +268,8 @@ function optionLeg(c) {
  *
  * @param {object} opts
  * @param {string} [opts.underlying] Underlying symbol (default: current chart).
+ * @param {number} [opts.limit]      How many nearest expiries to return.
+ *                                   Default 4; pass 0 for all upcoming.
  * @returns {Promise<{success, underlying, spot, expirations, ...}>}
  */
 export async function expirations(opts = {}) {
@@ -275,6 +277,7 @@ export async function expirations(opts = {}) {
   if (!requested) {
     return { success: false, error: 'No underlying given and no current chart symbol available.' };
   }
+  const limit = opts.limit == null ? 4 : Math.max(0, Number(opts.limit) || 0);
 
   // Try the symbol as given; if it's a futures contract with no chain, retry
   // with its cash root (charting NSE:NIFTY1! and asking for options → NSE:NIFTY).
@@ -305,7 +308,7 @@ export async function expirations(opts = {}) {
     if (type === 'call') e.call++; else if (type === 'put') e.put++;
   }
 
-  const expirations = [...byExp.entries()]
+  const allExpirations = [...byExp.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([exp, e]) => ({
       expiration: exp,
@@ -314,6 +317,9 @@ export async function expirations(opts = {}) {
       calls: e.call,
       puts: e.put,
     }));
+
+  // Default to just the nearest few expiries; limit=0 returns all upcoming.
+  const expirations = limit > 0 ? allExpirations.slice(0, limit) : allExpirations;
 
   const { price, description } = await getSpot(underlying);
 
@@ -326,6 +332,7 @@ export async function expirations(opts = {}) {
     total_contracts: result.total,
     truncated: result.total > EXP_SCAN_ROWS,
     count: expirations.length,
+    total_expiries: allExpirations.length,
     expirations,
   };
 }

@@ -14,20 +14,24 @@ auto-detect the underlying/root from the current chart symbol; pass
 
 ## options_expirations
 
-Cheap discovery call. Expired contracts are excluded.
+Cheap discovery call. Expired contracts are excluded. Returns the **nearest 4 expiries** by default.
 
-**Params:** `underlying?` (exchange-qualified, e.g. `NSE:NIFTY`; defaults to chart symbol).
+**Params:**
+- `underlying?` — exchange-qualified, e.g. `NSE:NIFTY`; defaults to chart symbol.
+- `limit?` — how many nearest expiries to return (default `4`; `0` = all upcoming).
 
 ```json
 {
-  "success": true, "underlying": "NSE:NIFTY", "spot": 23989.15,
-  "strike_range": { "min": 15000, "max": 33000 },
-  "total_contracts": 3975, "count": 17,
+  "success": true, "underlying": "NSE:NIFTY", "spot": 24056,
+  "strike_range": { "min": 1500, "max": 49500 },
+  "total_contracts": 4415, "count": 4, "total_expiries": 18,
   "expirations": [
-    { "expiration": 20260623, "days_to_expiry": 6, "strikes": 230, "calls": 230, "puts": 230 }
+    { "expiration": 20260630, "days_to_expiry": 4, "strikes": 298, "calls": 297, "puts": 297 }
   ]
 }
 ```
+
+`count` is how many are returned (capped by `limit`); `total_expiries` is how many upcoming expiries exist in total.
 
 ## options_chain
 
