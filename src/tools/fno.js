@@ -17,14 +17,11 @@ import * as core from '../core/fno.js';
 export function registerFnoTools(server) {
   server.tool(
     'options_chain',
-    'Get the option chain for an underlying from TradingView\'s scanner — strikes with call/put bid/ask/last/volume, greeks (delta, gamma, theta, vega, rho) and implied volatility (iv_pct). Auto-detects the underlying from the current chart symbol, defaults to the NEAREST upcoming expiration, and returns an ATM-centered window of strikes. Use options_expirations first to pick an expiration. Note: IV is a percentage; TradingView does not expose open interest.',
+    'Get the option chain for an underlying from TradingView\'s scanner — strikes with call and put bid/ask/last/volume, greeks (delta, gamma, theta, vega, rho) and implied volatility (iv_pct), merged per strike. Auto-detects the underlying from the current chart symbol, defaults to the NEAREST upcoming expiration, and returns an ATM-centered window of strikes. Use options_expirations first to pick an expiration. Note: IV is a percentage; TradingView does not expose open interest.',
     {
       underlying: z.string().optional().describe('Underlying symbol, exchange-qualified (e.g. "NSE:BPCL", "NASDAQ:AAPL"). Defaults to the current chart symbol.'),
       expiration: z.number().int().optional().describe('Expiration as YYYYMMDD (e.g. 20260630). Default: nearest upcoming expiration.'),
-      option_type: z.enum(['call', 'put', 'both']).optional().describe('Which side(s) to return. Default "both" (calls and puts merged per strike).'),
       strikes: z.number().int().optional().describe('Number of strikes centered on ATM to return. Default 17 (ATM ±8). Pass 0 for all (hard-capped at 250 nearest ATM).'),
-      min_strike: z.number().optional().describe('Lower strike bound. Overrides `strikes` when set.'),
-      max_strike: z.number().optional().describe('Upper strike bound. Overrides `strikes` when set.'),
     },
     async (args) => {
       try { return jsonResult(await core.optionsChain(args)); }

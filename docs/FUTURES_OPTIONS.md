@@ -40,9 +40,9 @@ Defaults to the **nearest upcoming** expiry and an **ATM-centered** strike windo
 **Params:**
 - `underlying?` — exchange-qualified; defaults to chart symbol. A futures symbol with no chain falls back to its cash root (`NSE:NIFTY1!` → `NSE:NIFTY`).
 - `expiration?` — `YYYYMMDD` (e.g. `20260623`). Default: nearest upcoming.
-- `option_type?` — `"call"` | `"put"` | `"both"` (default `"both"`, calls+puts merged per strike).
 - `strikes?` — count centered on ATM (default `17`, i.e. ATM ±8; `0` = all).
-- `min_strike?` / `max_strike?` — explicit strike bounds (override `strikes`).
+
+Calls and puts are always returned merged per strike.
 
 ```json
 {
@@ -61,8 +61,6 @@ Defaults to the **nearest upcoming** expiry and an **ATM-centered** strike windo
   ]
 }
 ```
-
-For `option_type: "call"`/`"put"`, the result is a flat `options: [...]` array instead of merged `strikes`.
 
 **Size handling.** A request is funneled so context stays small even for deep chains (NSE:NIFTY ≈ 4.4k contracts): the scanner is filtered server-side to one underlying + one expiry; only that expiry's ladder crosses CDP; output is then windowed to `strikes` (default 17 = ATM ±8). `strikes: 0` returns the full ladder up to a hard ceiling of **250 strikes** nearest ATM — when that trips, the result carries `strikes_capped: 250`, `truncated: true` and a `note`. Use `options_expirations` (≈1.6 KB) to browse expiries rather than widening the chain.
 

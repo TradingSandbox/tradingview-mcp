@@ -338,17 +338,15 @@ export async function expirations(opts = {}) {
 }
 
 /**
- * Read the option chain for an underlying.
+ * Read the option chain for an underlying — calls and puts merged per strike,
+ * for one expiry, windowed around ATM.
  *
  * @param {object} opts
  * @param {string} [opts.underlying]   Underlying symbol (default: current chart).
  * @param {number} [opts.expiration]   YYYYMMDD. Default: nearest upcoming expiry.
- * @param {string} [opts.option_type]  'call' | 'put' | 'both' (default 'both').
  * @param {number} [opts.strikes]      Number of strikes centered on ATM to keep.
  *                                     Default 17 (ATM ±8). Pass 0 for all
  *                                     (capped at MAX_CHAIN_STRIKES).
- * @param {number} [opts.min_strike]   Lower strike bound (overrides `strikes`).
- * @param {number} [opts.max_strike]   Upper strike bound (overrides `strikes`).
  * @returns {Promise<object>}
  */
 export async function optionsChain(opts = {}) {
@@ -357,9 +355,7 @@ export async function optionsChain(opts = {}) {
     return { success: false, error: 'No underlying given and no current chart symbol available.' };
   }
 
-  const optionType = ['call', 'put', 'both'].includes(opts.option_type) ? opts.option_type : 'both';
   const window = opts.strikes == null ? 17 : Math.max(0, Number(opts.strikes) || 0); // 17 = ATM ±8
-  const hasRange = Number.isFinite(opts.min_strike) || Number.isFinite(opts.max_strike);
 
   // Cheap resolution: nearest upcoming expiry + future→cash fallback in one
   // 1-row scan. We do NOT enumerate every expiry here — that's options_expirations'
@@ -376,21 +372,12 @@ export async function optionsChain(opts = {}) {
   const targetExp = opts.expiration != null ? Number(opts.expiration) : res.nearest;
   const { price: spot, description } = await getSpot(resolved);
 
-  // Build filters: underlying index + expiration + optional type/strike-range.
-  const filter = [{ left: 'expiration', operation: 'equal', right: targetExp }];
-  if (optionType !== 'both') filter.push({ left: 'option-type', operation: 'equal', right: optionType });
-  if (hasRange) {
-    const lo = Number.isFinite(opts.min_strike) ? opts.min_strike : 0;
-    const hi = Number.isFinite(opts.max_strike) ? opts.max_strike : 1e12;
-    filter.push({ left: 'strike', operation: 'in_range', right: [lo, hi] });
-  }
-
   let chain;
   try {
     chain = await scan('options', {
       columns: OPTION_COLUMNS,
       index_filters: [{ name: 'underlying_symbol', values: [resolved] }],
-      filter,
+      filter: [{ left: 'expiration', operation: 'equal', right: targetExp }],
       sort: { sortBy: 'strike', sortOrder: 'asc' },
       range: [0, CHAIN_SCAN_ROWS],
     });
@@ -419,10 +406,9 @@ export async function optionsChain(opts = {}) {
     return arr.slice(start, start + n);
   };
 
-  // Window around ATM unless an explicit range was given, then enforce the hard
-  // ceiling so strikes=0 / a wide range can never blow past MAX_CHAIN_STRIKES.
-  let keptStrikes = allStrikes;
-  if (!hasRange && window > 0) keptStrikes = centerOnAtm(keptStrikes, window);
+  // Window around ATM, then enforce the hard ceiling so strikes=0 can never
+  // blow past MAX_CHAIN_STRIKES.
+  let keptStrikes = window > 0 ? centerOnAtm(allStrikes, window) : allStrikes;
   let strikesCapped = false;
   if (keptStrikes.length > MAX_CHAIN_STRIKES) {
     keptStrikes = centerOnAtm(keptStrikes, MAX_CHAIN_STRIKES);
@@ -430,27 +416,6 @@ export async function optionsChain(opts = {}) {
   }
   const keepSet = new Set(keptStrikes);
   const kept = contracts.filter(c => keepSet.has(c.strike));
-
-  const base = {
-    success: true,
-    underlying: resolved,
-    description,
-    spot,
-    expiration: targetExp,
-    days_to_expiry: daysToExpiry(targetExp),
-    atm_strike: atmStrike,
-    option_type: optionType,
-    total_for_expiry: chain.total,
-    truncated: chain.total > chain.rows.length || strikesCapped,
-    ...(strikesCapped && { strikes_capped: MAX_CHAIN_STRIKES, note: 'Output capped to the strikes nearest ATM; narrow with strikes, min_strike or max_strike.' }),
-  };
-
-  if (optionType !== 'both') {
-    const list = kept
-      .filter(c => c.type === optionType)
-      .map(c => ({ ...c, dist_pct: spot ? round(((c.strike - spot) / spot) * 100, 2) : null, atm: c.strike === atmStrike }));
-    return { ...base, count: list.length, options: list };
-  }
 
   // Merge calls and puts onto one row per strike — the natural chain layout.
   const byStrike = new Map();
@@ -468,7 +433,20 @@ export async function optionsChain(opts = {}) {
       put: s.put || null,
     }));
 
-  return { ...base, count: strikes.length, strikes };
+  return {
+    success: true,
+    underlying: resolved,
+    description,
+    spot,
+    expiration: targetExp,
+    days_to_expiry: daysToExpiry(targetExp),
+    atm_strike: atmStrike,
+    total_for_expiry: chain.total,
+    truncated: chain.total > chain.rows.length || strikesCapped,
+    ...(strikesCapped && { strikes_capped: MAX_CHAIN_STRIKES, note: 'Output capped to the strikes nearest ATM; pass a smaller strikes value to narrow.' }),
+    count: strikes.length,
+    strikes,
+  };
 }
 
 /**
