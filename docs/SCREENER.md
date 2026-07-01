@@ -9,8 +9,10 @@ symbol's exchange; pass `market=` to override.
 | Tool | Purpose |
 |------|---------|
 | `screener_query` | Run a filter/sort against the scanner and return matching rows |
-| `screener_fields` | List known column/filter field names (curated) |
+| `screener_fields` | List known column/filter field names (flat, curated ~70) |
 | `screener_ops` | List filter operators + known market slugs |
+| `screener_catalog` | Browse the structured field catalog by category / search (concepts + value menus) |
+| `screener_field_info` | Resolve one field + optionally live-validate it against the scanner |
 
 ## screener_query
 
@@ -44,10 +46,37 @@ scanner has thousands of fields; this is the subset most queries use. Any field
 name works in `columns` / `filter[].left` even if absent here — unknown fields
 just return `null`.
 
+For the **full field reference** — all 3,770 columns organised by the 8 UI
+categories, with the length / timeframe / reporting-period values each attribute
+accepts — see [SCREENER_FIELDS.md](SCREENER_FIELDS.md).
+
 ```json
 { "success": true, "count": 70,
   "fields": { "close": "Last traded price", "RSI": "Relative Strength Index (14)", "...": "..." } }
 ```
+
+## screener_catalog
+
+Browses the **structured** field catalog — the ~260 scannable concepts grouped
+into the 8 categories TradingView's UI uses. Unlike `screener_fields` (a flat
+list), each concept carries its allowed **values**: length/timeframe for
+technicals (`RSI` → 2..30 × 9 timeframes), window for market data (`Perf.6M`),
+reporting period for fundamentals (`net_income_ttm`). Static — no network.
+
+**Params:** `category?` (one of the 8), `search?` (substring), `verbose?`
+(expand every concrete column name). The response includes a `naming` block
+explaining how to assemble a column such as `RSI7|60`.
+
+## screener_field_info
+
+Resolves a single field to its concept (category, type, value menu, example
+columns). Pass `market` to **live-validate** against `scanner.tradingview.com/<market>/metainfo`
+— confirms the exact column exists and reports how many of the concept's
+columns are present. Works for fields absent from the curated catalog too
+(`known:false`, still live-checkable). Use it to verify a hand-built column
+before dropping it into `screener_query`.
+
+See [SCREENER_FIELDS.md](SCREENER_FIELDS.md) for the full field reference.
 
 ## screener_ops
 
