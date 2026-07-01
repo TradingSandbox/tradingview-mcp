@@ -1,10 +1,12 @@
 /**
  * MCP tool wrappers for the direct REST screener (scanner.tradingview.com).
  *
- * Three tools:
- *   - screener_query   : run a filter against the public scanner endpoint
- *   - screener_fields  : list known column / filter field names
- *   - screener_ops     : list filter operators
+ * Five tools:
+ *   - screener_query       : run a filter against the public scanner endpoint
+ *   - screener_fields      : list known column / filter field names (flat, legacy)
+ *   - screener_ops         : list filter operators
+ *   - screener_catalog     : browse the structured field catalog by category/search
+ *   - screener_field_info  : resolve + optionally live-validate a single field
  *
  * These are independent of the UI-dialog screener tools (screener_open /
  * screener_get / etc.). Use this family when you want to ask the LLM /
@@ -13,6 +15,7 @@
 import { z } from 'zod';
 import { jsonResult } from './_format.js';
 import * as core from '../core/screener_query.js';
+import * as catalog from '../core/screener_catalog.js';
 
 const filterClauseSchema = z.object({
   left: z.string().describe('Field name (e.g., "market_cap_basic", "RSI", "close")'),
@@ -70,6 +73,37 @@ export function registerScreenerQueryTools(server) {
           operations: core.FILTER_OPERATIONS,
           markets_known: core.KNOWN_MARKETS,
         });
+      } catch (err) {
+        return jsonResult({ success: false, error: err.message }, true);
+      }
+    }
+  );
+
+  server.tool(
+    'screener_catalog',
+    'Browse the structured screener field catalog — the ~260 scannable concepts organized into the 8 categories TradingView\'s UI uses (security_info, market_data, technicals, valuation, financials, margins, growth, dividends). Unlike screener_fields (a flat ~70-field list), each concept shows its allowed VALUES: the length/timeframe for technicals (RSI takes 2..30 + any of 9 timeframes), the window for market data (Perf.6M), the reporting period for fundamentals (net_income_ttm). Pass category to focus one group, search to substring-match concepts (e.g. "margin", "rsi"), verbose to expand every concrete column name. Returns a naming block explaining how to assemble a column (e.g. RSI7|60). Static — no network. Use screener_field_info to live-validate a specific field.',
+    {
+      category: z.enum(catalog.CATEGORIES).optional().describe('Restrict to one UI category.'),
+      search: z.string().optional().describe('Substring filter across concept labels / fields / descriptions.'),
+      verbose: z.boolean().optional().describe('Include the full expanded column list (all length×timeframe / period variants) per concept.'),
+    },
+    async (args) => {
+      try { return jsonResult(catalog.catalogView(args || {})); }
+      catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    }
+  );
+
+  server.tool(
+    'screener_field_info',
+    'Resolve a single screener field to its concept: category, type, description, the concrete columns it covers, its value menu, and up to 12 example column names. Pass market (e.g. "america", "india") to LIVE-VALIDATE against TradingView\'s real metainfo endpoint — confirms the exact field exists and reports how many of the concept\'s columns are present for that market. Works for any field, even ones absent from the curated catalog (known:false, still live-checkable). Use this to verify a hand-built column like "RSI7|60" or "return_on_equity_fy" before putting it in a screener_query.',
+    {
+      field: z.string().describe('A field/column name, e.g. "RSI", "RSI7|60", "net_income_ttm", "Perf.6M".'),
+      market: z.string().optional().describe('If set, live-validate against this market\'s scanner schema (schema is global; defaults to america when omitted-but-requested).'),
+    },
+    async (args) => {
+      try {
+        const { field, market } = args || {};
+        return jsonResult(await catalog.fieldInfo(field, market));
       } catch (err) {
         return jsonResult({ success: false, error: err.message }, true);
       }
