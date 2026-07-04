@@ -9,6 +9,7 @@ import { registerDrawingTools } from './tools/drawing.js';
 import { registerAlertTools } from './tools/alerts.js';
 import { registerBatchTools } from './tools/batch.js';
 import { registerReplayTools } from './tools/replay.js';
+import { registerBacktestTools } from './tools/backtest.js';
 import { registerIndicatorTools } from './tools/indicators.js';
 import { registerWatchlistTools } from './tools/watchlist.js';
 import { registerScreenerQueryTools } from './tools/screener_query.js';
@@ -27,7 +28,7 @@ const server = new McpServer(
     description: 'AI-assisted TradingView chart analysis and Pine Script development via Chrome DevTools Protocol',
   },
   {
-    instructions: `TradingView MCP — 90 tools for reading and controlling a live TradingView Desktop chart.
+    instructions: `TradingView MCP — 96 tools for reading and controlling a live TradingView Desktop chart.
 
 TOOL SELECTION GUIDE — use this to pick the right tool:
 
@@ -72,8 +73,16 @@ News (symbol/market news, from TradingView's news service):
 - news_list → recent headlines for a symbol (id, title, provider, age, urgency, related symbols). Cheap — bodies NOT included. Auto-detects the chart symbol; pass symbol= / limit= (default 20, cap 50)
 - news_read → full article body (plain text) for one headline id from news_list. Lazy, so news_list stays small
 
+Backtesting (Strategy Tester, requires a strategy on the chart):
+- data_get_strategy_results → performance metrics (net profit, win rate, profit factor, DD, Sharpe/Sortino; all/long/short buckets)
+- data_get_trades → per-trade list (most recent first window; offset= to page back, summary=true for aggregate stats)
+- data_get_equity → equity curve per closed trade + buy&hold, downsampled (max_points=, default 100)
+- strategy_get_properties / strategy_set_properties → read/change initial capital, commission, slippage, order size, pyramiding, margin — waits for recalc
+- strategy_set_backtest_range → run over an explicit date range via Deep Backtesting (from/to or preset last_7d/last_30d/last_90d/last_365d/entire_history; action="reset" to go back). While active, the three data tools above read the deep report
+- strategy_optimize → parameter sweep over a grid of input values, ranked results, restores original inputs
+
 Screenshots: capture_screenshot → regions: "full", "chart", "strategy_tester"
-Replay: replay_start → replay_step → replay_trade → replay_status → replay_stop
+Replay: replay_start → replay_step (count= to advance N bars) → replay_trade (quantity=) → replay_status → replay_stop
 Batch: batch_run → run action across multiple symbols/timeframes
 Drawing: draw_shape → horizontal_line, trend_line, rectangle, text
 Alerts: alert_create, alert_list, alert_delete
@@ -102,6 +111,7 @@ registerDrawingTools(server);
 registerAlertTools(server);
 registerBatchTools(server);
 registerReplayTools(server);
+registerBacktestTools(server);
 registerIndicatorTools(server);
 registerWatchlistTools(server);
 registerScreenerQueryTools(server);

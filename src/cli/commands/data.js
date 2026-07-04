@@ -63,15 +63,24 @@ register('data', {
       handler: () => core.getStrategyResults(),
     }],
     ['trades', {
-      description: 'Get strategy trade list',
+      description: 'Get strategy trade list (see also: tv backtest trades)',
       options: {
-        max: { type: 'string', short: 'n', description: 'Max trades to return' },
+        max: { type: 'string', short: 'n', description: 'Max trades to return (default 20, cap 500)' },
+        offset: { type: 'string', short: 'o', description: 'Skip N trades counting back from the most recent' },
+        summary: { type: 'boolean', short: 's', description: 'Aggregate stats instead of the list' },
       },
-      handler: (opts) => core.getTrades({ max_trades: opts.max ? Number(opts.max) : undefined }),
+      handler: (opts) => core.getTrades({
+        max_trades: opts.max ? Number(opts.max) : undefined,
+        offset: opts.offset ? Number(opts.offset) : undefined,
+        summary: opts.summary,
+      }),
     }],
     ['equity', {
-      description: 'Get strategy equity curve',
-      handler: () => core.getEquity(),
+      description: 'Get strategy equity curve (see also: tv backtest equity)',
+      options: {
+        points: { type: 'string', short: 'p', description: 'Max curve points (default 100)' },
+      },
+      handler: (opts) => core.getEquity({ max_points: opts.points ? Number(opts.points) : undefined }),
     }],
     ['depth', {
       description: 'Get order book / DOM data',

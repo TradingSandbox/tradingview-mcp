@@ -23,25 +23,31 @@ export function registerDataTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_strategy_results', 'Get strategy performance metrics from Strategy Tester', {
+  server.tool('data_get_strategy_results', 'Get strategy performance metrics from the Strategy Tester (net profit, win rate, profit factor, drawdown, Sharpe/Sortino — with all/long/short buckets). Reads the deep-backtest report when strategy_set_backtest_range is active.', {
+    entity_id: z.string().optional().describe('Strategy entity ID (from chart_get_state). Omit to use the first strategy on the chart.'),
     target_id: targetIdParam,
-  }, async ({ target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.getStrategyResults())); }
+  }, async ({ entity_id, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.getStrategyResults({ entity_id }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_trades', 'Get trade list from Strategy Tester', {
-    max_trades: z.coerce.number().optional().describe('Maximum trades to return'),
+  server.tool('data_get_trades', 'Get the trade list from the Strategy Tester (entry/exit, qty, P&L, run-up, drawdown per trade). Returns the MOST RECENT trades by default; use offset to page back, or summary=true for aggregate stats (win rate, long/short split) instead of individual trades.', {
+    max_trades: z.coerce.number().optional().describe('Max trades to return (default 20, cap 500)'),
+    offset: z.coerce.number().optional().describe('How many trades to skip, counting back from the most recent (default 0). offset=20 + max_trades=20 → trades 21-40 from the end.'),
+    summary: z.coerce.boolean().optional().describe('Return aggregate stats (total, wins/losses, win rate, gross profit/loss, long/short split) instead of the trade list — much smaller output'),
+    entity_id: z.string().optional().describe('Strategy entity ID (from chart_get_state). Omit to use the first strategy on the chart.'),
     target_id: targetIdParam,
-  }, async ({ max_trades, target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.getTrades({ max_trades }))); }
+  }, async ({ max_trades, offset, summary, entity_id, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.getTrades({ max_trades, offset, summary, entity_id }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_equity', 'Get equity curve data from Strategy Tester', {
+  server.tool('data_get_equity', 'Get the equity curve from the Strategy Tester (one point per closed trade, with buy&hold comparison, final equity and max drawdown). Downsampled to max_points to keep output small.', {
+    max_points: z.coerce.number().optional().describe('Max curve points to return (default 100). First and last points are always kept.'),
+    entity_id: z.string().optional().describe('Strategy entity ID (from chart_get_state). Omit to use the first strategy on the chart.'),
     target_id: targetIdParam,
-  }, async ({ target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.getEquity())); }
+  }, async ({ max_points, entity_id, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.getEquity({ max_points, entity_id }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

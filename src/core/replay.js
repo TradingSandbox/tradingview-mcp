@@ -56,22 +56,39 @@ export async function start({ date, _deps } = {}) {
   return { success: true, replay_started: true, date: date || '(first available)', current_date: currentDate };
 }
 
-export async function step({ _deps } = {}) {
+export const MAX_STEP_COUNT = 500;
+
+export async function step({ count, _deps } = {}) {
   const { evaluate, getReplayApi } = _resolve(_deps);
+  const steps = Math.min(Math.max(1, Math.floor(count || 1)), MAX_STEP_COUNT);
   const rp = await getReplayApi();
   const started = await evaluate(wv(`${rp}.isReplayStarted()`));
   if (!started) throw new Error('Replay is not started. Use replay_start first.');
   const before = await evaluate(wv(`${rp}.currentDate()`));
-  await evaluate(`${rp}.doStep()`);
-  // doStep() is async internally — currentDate takes ~500ms to update.
-  // Poll until it changes or timeout after 3s.
   let currentDate = before;
-  for (let i = 0; i < 12; i++) {
-    await new Promise(r => setTimeout(r, 250));
-    currentDate = await evaluate(wv(`${rp}.currentDate()`));
-    if (currentDate !== before) break;
+  let stepped = 0;
+  for (let s = 0; s < steps; s++) {
+    const prev = currentDate;
+    await evaluate(`${rp}.doStep()`);
+    // doStep() is async internally — currentDate takes ~500ms to update.
+    // Poll until it changes or timeout after 3s.
+    let changed = false;
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      currentDate = await evaluate(wv(`${rp}.currentDate()`));
+      if (currentDate !== prev) { changed = true; break; }
+    }
+    if (!changed) break; // end of data (caught up to realtime) — stop early
+    stepped++;
   }
-  return { success: true, action: 'step', current_date: currentDate };
+  return {
+    success: true,
+    action: 'step',
+    steps_requested: steps,
+    steps_advanced: stepped,
+    current_date: currentDate,
+    ...(stepped < steps ? { note: 'Stopped early — no more bars to advance (replay may have reached realtime).' } : {}),
+  };
 }
 
 export async function autoplay({ speed, _deps } = {}) {
@@ -103,20 +120,25 @@ export async function stop({ _deps } = {}) {
   return { success: true, action: 'replay_stopped' };
 }
 
-export async function trade({ action, _deps }) {
+export async function trade({ action, quantity, _deps }) {
   const { evaluate, getReplayApi } = _resolve(_deps);
+  if (quantity !== undefined && (typeof quantity !== 'number' || !isFinite(quantity) || quantity <= 0)) {
+    throw new Error('quantity must be a positive number');
+  }
   const rp = await getReplayApi();
   const started = await evaluate(wv(`${rp}.isReplayStarted()`));
   if (!started) throw new Error('Replay is not started. Use replay_start first.');
 
-  if (action === 'buy') await evaluate(`${rp}.buy()`);
-  else if (action === 'sell') await evaluate(`${rp}.sell()`);
+  // buy(qty)/sell(qty) forward qty to the trading model's addOrder; undefined uses the default size
+  const qtyArg = quantity !== undefined ? String(quantity) : '';
+  if (action === 'buy') await evaluate(`${rp}.buy(${qtyArg})`);
+  else if (action === 'sell') await evaluate(`${rp}.sell(${qtyArg})`);
   else if (action === 'close') await evaluate(`${rp}.closePosition()`);
   else throw new Error('Invalid action. Use: buy, sell, or close');
 
   const position = await evaluate(wv(`${rp}.position()`));
   const pnl = await evaluate(wv(`${rp}.realizedPL()`));
-  return { success: true, action, position, realized_pnl: pnl };
+  return { success: true, action, ...(quantity !== undefined ? { quantity } : {}), position, realized_pnl: pnl };
 }
 
 export async function status({ _deps } = {}) {

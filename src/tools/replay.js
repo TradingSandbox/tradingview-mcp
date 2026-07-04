@@ -14,10 +14,11 @@ export function registerReplayTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('replay_step', 'Advance one bar in replay mode', {
+  server.tool('replay_step', 'Advance bars in replay mode (one by default, count= for several at once)', {
+    count: z.coerce.number().optional().describe('Number of bars to advance (default 1, cap 500). Stops early if replay reaches realtime.'),
     target_id: targetIdParam,
-  }, async ({ target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.step())); }
+  }, async ({ count, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.step({ count }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
@@ -38,9 +39,10 @@ export function registerReplayTools(server) {
 
   server.tool('replay_trade', 'Execute a trade action in replay mode (buy, sell, or close position)', {
     action: z.string().describe('Trade action: buy, sell, or close'),
+    quantity: z.coerce.number().optional().describe('Order quantity (contracts/shares). Omit to use the replay trading panel default.'),
     target_id: targetIdParam,
-  }, async ({ action, target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.trade({ action }))); }
+  }, async ({ action, quantity, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.trade({ action, quantity }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
