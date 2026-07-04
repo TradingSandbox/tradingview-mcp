@@ -1,6 +1,6 @@
 # TradingView MCP — Claude Instructions
 
-74 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+96 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
 
@@ -51,11 +51,23 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 7. `pine_new` → create blank indicator/strategy/library
 8. `pine_open` → load a saved script by name
 
+### "Backtest my strategy" (Strategy Tester)
+Requires a strategy (Pine script with `strategy()`) on the chart. All read tools auto-find it; pass `entity_id` (from `chart_get_state`) if several are loaded.
+
+1. `data_get_strategy_results` → performance metrics: net profit, win rate, profit factor, max drawdown, Sharpe/Sortino, commission paid — with `all`/`long`/`short` buckets. Percent fields are already percentages
+2. `data_get_trades` → per-trade list (entry/exit price+time, qty, P&L, run-up, drawdown). Returns the MOST RECENT window (default 20, cap 500); `offset` pages back from the latest trade; **`summary: true`** returns aggregate stats instead (much smaller)
+3. `data_get_equity` → equity curve (one point per closed trade) + buy&hold comparison, final equity, max drawdown. Downsampled to `max_points` (default 100)
+4. `strategy_get_properties` / `strategy_set_properties` → read/change the Properties-tab settings: `initial_capital`, `commission_type`/`commission_value`, `slippage`, `default_qty_type`/`default_qty_value`, `pyramiding`, `margin_long/short`, `use_bar_magnifier`, etc. Set waits for the recalculation before returning
+5. `strategy_set_backtest_range` → run over an EXPLICIT date range via TradingView Deep Backtesting (`from`/`to` ISO dates, or `preset`: last_7d/last_30d/last_90d/last_365d/entire_history). While active, tools 1-3 read the deep report; `action: "reset"` returns to the normal chart backtest
+6. `strategy_optimize` → parameter sweep: `grid: {"Swing length": [30,50,70], "ATR stop multiplier": [1.5,2]}` tests every combination (cap 100), ranks by `metric` (default netProfit), restores original inputs afterwards. Each combination is a full recalculation (a few seconds)
+
+Rules: without `strategy_set_backtest_range`, results depend on how many bars the chart has loaded — set a range when comparing runs. Use `summary: true` on `data_get_trades` unless you need individual trades.
+
 ### "Practice trading with replay"
 1. `replay_start` with `date: "2025-03-01"` → enter replay mode
-2. `replay_step` → advance one bar
+2. `replay_step` → advance one bar (pass `count` to advance N bars at once, cap 500)
 3. `replay_autoplay` → auto-advance (set speed with `speed` param in ms)
-4. `replay_trade` with `action: "buy"/"sell"/"close"` → execute trades
+4. `replay_trade` with `action: "buy"/"sell"/"close"` → execute trades (optional `quantity`)
 5. `replay_status` → check position, P&L, current date
 6. `replay_stop` → return to realtime
 
@@ -147,6 +159,11 @@ These tools can return large payloads. Follow these rules to avoid context bloat
 | `data_get_pine_tables` | ~1-4 KB per study (formatted rows) |
 | `data_get_pine_boxes` | ~1-2 KB per study (deduplicated zones) |
 | `data_get_ohlcv` (summary) | ~500 bytes |
+| `data_get_strategy_results` | ~2 KB (all metric buckets) |
+| `data_get_trades` (summary) | ~500 bytes |
+| `data_get_trades` (20 trades) | ~5 KB |
+| `data_get_equity` (100 points) | ~6 KB |
+| `strategy_optimize` | ~1 KB per combination |
 | `data_get_ohlcv` (100 bars) | ~8 KB |
 | `fundamentals_get` | ~1 KB (one bucketed snapshot) |
 | `technicals_get` | ~1 KB (one bucketed snapshot) |

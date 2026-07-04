@@ -182,6 +182,34 @@ describe('step() — doStep and polling', () => {
       (err) => err.message.includes('not started'),
     );
   });
+
+  it('count=N advances N bars and reports steps_advanced', async () => {
+    let date = 1000;
+    const evaluate = async (expr) => {
+      if (expr.includes('isReplayStarted')) return true;
+      if (expr.includes('doStep')) { date += 1000; return undefined; }
+      if (expr.includes('currentDate')) return date;
+      return undefined;
+    };
+    const result = await step({ count: 3, _deps: { evaluate, getReplayApi: mockGetReplayApi() } });
+    assert.equal(result.steps_requested, 3);
+    assert.equal(result.steps_advanced, 3);
+    assert.equal(result.current_date, 4000);
+  });
+
+  it('count=N stops early when the date stops changing', async () => {
+    let steps = 0;
+    let date = 1000;
+    const evaluate = async (expr) => {
+      if (expr.includes('isReplayStarted')) return true;
+      if (expr.includes('doStep')) { steps++; if (steps <= 2) date += 1000; return undefined; }
+      if (expr.includes('currentDate')) return date;
+      return undefined;
+    };
+    const result = await step({ count: 10, _deps: { evaluate, getReplayApi: mockGetReplayApi() } });
+    assert.equal(result.steps_advanced, 2);
+    assert.ok(result.note.includes('Stopped early'));
+  });
 });
 
 // ── autoplay() ───────────────────────────────────────────────────────────
@@ -301,6 +329,21 @@ describe('trade()', () => {
       assert.equal(result.realized_pnl, 50.5);
     });
   }
+
+  it('passes quantity to buy()', async () => {
+    const { _deps, evaluate } = mockDeps({ 'isReplayStarted': true, 'buy': undefined, 'position': 5, 'realizedPL': 0 });
+    const result = await trade({ action: 'buy', quantity: 5, _deps });
+    assert.equal(result.quantity, 5);
+    assert.ok(evaluate.calls.some((c) => c.includes('buy(5)')));
+  });
+
+  it('rejects a non-positive quantity', async () => {
+    const { _deps } = mockDeps({ 'isReplayStarted': true });
+    await assert.rejects(
+      () => trade({ action: 'buy', quantity: -1, _deps }),
+      (err) => err.message.includes('positive'),
+    );
+  });
 
   it('throws on invalid action', async () => {
     const { _deps } = mockDeps({ 'isReplayStarted': true });
