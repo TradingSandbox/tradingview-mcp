@@ -6,12 +6,23 @@ import { withTarget } from '../connection.js';
 const targetIdParam = z.string().optional().describe('Optional CDP target id from target_list/tv_health_check. Runs this command against that TradingView window/tab.');
 
 export function registerDataTools(server) {
-  server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats instead of all bars (saves context).', {
+  server.tool('data_get_ohlcv', 'Get OHLCV bar data from the visible chart (tick-accurate, current symbol + timeframe). Use summary=true for compact stats instead of all bars (saves context). For any OTHER symbol or timeframe use data_get_symbol_ohlcv.', {
     count: z.coerce.number().optional().describe('Number of bars to retrieve (max 500, default 100)'),
     summary: z.coerce.boolean().optional().describe('Return summary stats (high, low, open, close, avg volume, range) instead of all bars — much smaller output'),
     target_id: targetIdParam,
   }, async ({ count, summary, target_id }) => {
     try { return jsonResult(await withTarget(target_id, () => core.getOhlcv({ count, summary }))); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_symbol_ohlcv', 'Fetch OHLCV bars for ANY symbol at ANY timeframe through a headless data session — the visible chart is NOT touched or changed. Works for stocks, futures, forex, crypto. Use summary=true for compact stats.', {
+    symbol: z.string().optional().describe('Exchange-qualified symbol (e.g. "NASDAQ:AAPL", "NSE:RELIANCE", "MCX:GOLD1!"). Omit for the current chart symbol.'),
+    timeframe: z.string().optional().describe('Resolution: minutes ("1", "15", "60", "240") or "D", "W", "M" (default "D")'),
+    count: z.coerce.number().optional().describe('Number of bars to retrieve (max 500, default 100)'),
+    summary: z.coerce.boolean().optional().describe('Return summary stats instead of all bars — much smaller output'),
+    target_id: targetIdParam,
+  }, async ({ symbol, timeframe, count, summary, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.getSymbolOhlcv({ symbol, timeframe, count, summary }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

@@ -225,3 +225,43 @@ describe('optimize() validation', () => {
     );
   });
 });
+
+// ── OHLCV helpers (core/data.js) ─────────────────────────────────────────
+
+describe('normalizeResolution()', async () => {
+  const { normalizeResolution } = await import('../src/core/data.js');
+
+  it('passes through minute strings and normalizes words', () => {
+    assert.equal(normalizeResolution('15'), '15');
+    assert.equal(normalizeResolution('240'), '240');
+    assert.equal(normalizeResolution('d'), 'D');
+    assert.equal(normalizeResolution('Weekly'), 'W');
+    assert.equal(normalizeResolution('1D'), 'D');
+    assert.equal(normalizeResolution('month'), 'M');
+    assert.equal(normalizeResolution(undefined), null);
+    assert.equal(normalizeResolution(''), null);
+  });
+
+  it('rejects garbage', () => {
+    assert.throws(() => normalizeResolution('yearly'), /Invalid timeframe/);
+  });
+});
+
+describe('buildOhlcvSummary()', async () => {
+  const { buildOhlcvSummary } = await import('../src/core/data.js');
+
+  it('computes range, change and averages', () => {
+    const bars = [
+      { time: 1, open: 100, high: 110, low: 95, close: 105, volume: 1000 },
+      { time: 2, open: 105, high: 120, low: 104, close: 118, volume: 3000 },
+    ];
+    const s = buildOhlcvSummary(bars);
+    assert.equal(s.bar_count, 2);
+    assert.equal(s.high, 120);
+    assert.equal(s.low, 95);
+    assert.equal(s.range, 25);
+    assert.equal(s.change, 18);
+    assert.equal(s.change_pct, '18%');
+    assert.equal(s.avg_volume, 2000);
+  });
+});
