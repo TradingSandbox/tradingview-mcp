@@ -17,6 +17,7 @@ import './commands/pine.js';
 import './commands/capture.js';
 import './commands/replay.js';
 import './commands/backtest.js';
+import './commands/orderflow.js';
 import './commands/drawing.js';
 import './commands/alerts.js';
 import './commands/watchlist.js';
