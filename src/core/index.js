@@ -10,6 +10,7 @@ export * as capture from './capture.js';
 export * as drawing from './drawing.js';
 export * as replay from './replay.js';
 export * as backtest from './backtest.js';
+export * as orderflow from './orderflow.js';
 export * as alerts from './alerts.js';
 export * as batch from './batch.js';
 export * as watchlist from './watchlist.js';

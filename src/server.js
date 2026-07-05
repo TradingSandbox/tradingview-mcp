@@ -10,6 +10,7 @@ import { registerAlertTools } from './tools/alerts.js';
 import { registerBatchTools } from './tools/batch.js';
 import { registerReplayTools } from './tools/replay.js';
 import { registerBacktestTools } from './tools/backtest.js';
+import { registerOrderflowTools } from './tools/orderflow.js';
 import { registerIndicatorTools } from './tools/indicators.js';
 import { registerWatchlistTools } from './tools/watchlist.js';
 import { registerScreenerQueryTools } from './tools/screener_query.js';
@@ -28,7 +29,7 @@ const server = new McpServer(
     description: 'AI-assisted TradingView chart analysis and Pine Script development via Chrome DevTools Protocol',
   },
   {
-    instructions: `TradingView MCP — 96 tools for reading and controlling a live TradingView Desktop chart.
+    instructions: `TradingView MCP — 99 tools for reading and controlling a live TradingView Desktop chart.
 
 TOOL SELECTION GUIDE — use this to pick the right tool:
 
@@ -73,6 +74,11 @@ News (symbol/market news, from TradingView's news service):
 - news_list → recent headlines for a symbol (id, title, provider, age, urgency, related symbols). Cheap — bodies NOT included. Auto-detects the chart symbol; pass symbol= / limit= (default 20, cap 50)
 - news_read → full article body (plain text) for one headline id from news_list. Lazy, so news_list stays small
 
+Order flow / volume profile:
+- data_get_volume_profile → volume-at-price rows with buy/sell split (up/down volume, delta), POC, value area (VAH/VAL) from any volume-by-price study on the chart. Session/periodic types return one profile per session
+- data_get_order_flow → per-candle order flow (footprint): buy/sell volume per price level, imbalance flags, per-candle POC/VA, candle delta (needs a footprint study; summary=true for totals only)
+- volume_profile_manage → add/remove a volume profile / footprint study (visible_range, session, fixed_range, periodic, footprint) — these premium studies cannot be added via chart_manage_indicator
+
 Backtesting (Strategy Tester, requires a strategy on the chart):
 - data_get_strategy_results → performance metrics (net profit, win rate, profit factor, DD, Sharpe/Sortino; all/long/short buckets)
 - data_get_trades → per-trade list (most recent first window; offset= to page back, summary=true for aggregate stats)
@@ -112,6 +118,7 @@ registerAlertTools(server);
 registerBatchTools(server);
 registerReplayTools(server);
 registerBacktestTools(server);
+registerOrderflowTools(server);
 registerIndicatorTools(server);
 registerWatchlistTools(server);
 registerScreenerQueryTools(server);
