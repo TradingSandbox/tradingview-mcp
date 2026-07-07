@@ -85,7 +85,7 @@ Backtesting (Strategy Tester, requires a strategy on the chart):
 - data_get_equity → equity curve per closed trade + buy&hold, downsampled (max_points=, default 100)
 - strategy_get_properties / strategy_set_properties → read/change initial capital, commission, slippage, order size, pyramiding, margin — waits for recalc
 - strategy_set_backtest_range → run over an explicit date range via Deep Backtesting (from/to or preset last_7d/last_30d/last_90d/last_365d/entire_history; action="reset" to go back). While active, the three data tools above read the deep report
-- strategy_optimize → parameter sweep over a grid of input values, ranked results, restores original inputs
+- strategy_optimize → parameter sweep over chart history or an explicit deep-backtest range, ranked results, restores original inputs/report mode
 
 Screenshots: capture_screenshot → regions: "full", "chart", "strategy_tester"
 Replay: replay_start → replay_step (count= to advance N bars) → replay_trade (quantity=) → replay_status → replay_stop
