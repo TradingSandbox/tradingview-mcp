@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mapTrade, summarizeTrades, downsample, shapeMetrics, gridCombos,
-  getTrades, getEquity, setProperties, optimize,
+  getTrades, getEquity, setProperties, optimize, resolveOptimizeRange,
   STRATEGY_PROPERTY_IDS, MAX_TRADES_LIMIT,
 } from '../src/core/backtest.js';
 
@@ -198,6 +198,21 @@ describe('setProperties() validation', () => {
 });
 
 describe('optimize() validation', () => {
+  it('resolves the default one-year deep-backtest range deterministically', () => {
+    const now = Date.UTC(2026, 6, 7);
+    assert.deepEqual(resolveOptimizeRange({ range_preset: 'last_365d', now_ms: now }), {
+      fromMs: now - 365 * 86400e3,
+      toMs: now,
+    });
+  });
+
+  it('accepts a custom deep-backtest range and rejects incomplete ranges', () => {
+    const range = resolveOptimizeRange({ range_from: '2025-01-01', range_to: '2026-01-01' });
+    assert.equal(range.fromMs, Date.parse('2025-01-01'));
+    assert.equal(range.toMs, Date.parse('2026-01-01'));
+    assert.throws(() => resolveOptimizeRange({ range_from: '2025-01-01' }), /both range_from and range_to/);
+  });
+
   it('rejects an empty grid', async () => {
     await assert.rejects(optimize({ grid: {}, _deps: mockDeps({}) }), /non-empty/);
   });

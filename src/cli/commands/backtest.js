@@ -75,12 +75,15 @@ register('backtest', {
       }),
     }],
     ['optimize', {
-      description: 'Parameter sweep. Usage: tv backtest optimize \'{"Swing length":[30,50,70]}\' [--metric netProfit]',
+      description: 'Parameter sweep over chart history or a deep date range. Usage: tv backtest optimize \'{"Swing length":[30,50,70]}\' [--range last_365d]',
       options: {
         metric: { type: 'string', short: 'm', description: 'Rank by: netProfit, profitFactor, percentProfitable, sharpeRatio, maxStrategyDrawDown, …' },
         max: { type: 'string', short: 'n', description: 'Combination cap (default 30, hard cap 100)' },
         entity: { type: 'string', short: 'e', description: 'Strategy entity ID' },
         timeout: { type: 'string', short: 't', description: 'Max ms per combination (default 45000)' },
+        range: { type: 'string', short: 'r', description: 'Deep range: last_7d, last_30d, last_90d, last_365d, entire_history' },
+        from: { type: 'string', description: 'Custom deep range start (requires --to)' },
+        to: { type: 'string', description: 'Custom deep range end (requires --from)' },
       },
       handler: (opts, positionals) => {
         if (!positionals[0]) throw new Error('Grid JSON required. Usage: tv backtest optimize \'{"ATR stop multiplier":[1.5,2,2.5]}\'');
@@ -90,6 +93,9 @@ register('backtest', {
           max_combinations: opts.max ? Number(opts.max) : undefined,
           entity_id: opts.entity,
           timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
+          range_preset: opts.range,
+          range_from: opts.from,
+          range_to: opts.to,
         });
       },
     }],
