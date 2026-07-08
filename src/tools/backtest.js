@@ -46,9 +46,11 @@ export function registerBacktestTools(server) {
     range_preset: z.string().optional().describe('Optional Deep Backtesting range: last_7d, last_30d, last_90d, last_365d, entire_history'),
     range_from: z.string().optional().describe('Optional custom Deep Backtesting start date (ISO date or unix timestamp); requires range_to'),
     range_to: z.string().optional().describe('Optional custom Deep Backtesting end date (ISO date or unix timestamp); requires range_from'),
+    diagnostics: z.coerce.boolean().optional().describe('For a singleton grid, include trade summary, recent trades, and equity curve diagnostics'),
+    retain_inputs: z.coerce.boolean().optional().describe('For a singleton grid, leave evaluated inputs active instead of restoring them; caller must restore'),
     target_id: targetIdParam,
-  }, async ({ grid, metric, max_combinations, entity_id, timeout_ms, range_preset, range_from, range_to, target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.optimize({ grid, metric, max_combinations, entity_id, timeout_ms, range_preset, range_from, range_to }))); }
+  }, async ({ grid, metric, max_combinations, entity_id, timeout_ms, range_preset, range_from, range_to, diagnostics, retain_inputs, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.optimize({ grid, metric, max_combinations, entity_id, timeout_ms, range_preset, range_from, range_to, diagnostics, retain_inputs }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 }
