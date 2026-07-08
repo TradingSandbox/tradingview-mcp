@@ -232,6 +232,18 @@ describe('optimize() validation', () => {
     );
   });
 
+  it('limits diagnostics and retained inputs to singleton evaluations', async () => {
+    const meta = { entity_id: 'X', name: 'S', inputs: [{ id: 'in_1', name: 'a', type: 'integer', current: 1 }] };
+    await assert.rejects(
+      optimize({ grid: { a: [1, 2] }, diagnostics: true, _deps: mockDeps(meta) }),
+      /require exactly one parameter combination/
+    );
+    await assert.rejects(
+      optimize({ grid: { a: [1, 2] }, retain_inputs: true, _deps: mockDeps(meta) }),
+      /require exactly one parameter combination/
+    );
+  });
+
   it('rejects unknown input names with a helpful list', async () => {
     const meta = { entity_id: 'X', name: 'S', inputs: [{ id: 'in_1', name: 'Swing length', type: 'integer', current: 50 }] };
     await assert.rejects(
