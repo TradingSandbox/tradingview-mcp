@@ -16,6 +16,97 @@
 import { evaluateAsync, evaluate, safeString } from '../connection.js';
 
 const SCANNER_BASE = 'https://scanner.tradingview.com';
+export { SCANNER_BASE };
+
+// ---------------------------------------------------------------------------
+// Rate-limit circuit breaker. CloudFront rate-limits scanner.tradingview.com
+// per-IP; its 429 responses carry no Access-Control-Allow-Origin header, so
+// the in-page fetch can't read them and rejects with a bare "Failed to fetch"
+// — indistinguishable from a genuine CORS/CSP/network block from inside the
+// page. When that happens we probe once from Node (no CORS there) to read the
+// real status. On a confirmed 429 we open the breaker with an exponential
+// cooldown so we stop re-tripping CloudFront's rate window, which otherwise
+// never cools down while callers keep polling.
+// ---------------------------------------------------------------------------
+const COOLDOWN_BASE_MS = 60_000;
+const COOLDOWN_MAX_MS = 600_000;
+let cooldownUntil = 0;
+let consecutive429s = 0;
+
+function rateLimitError() {
+  const secondsLeft = Math.ceil((cooldownUntil - Date.now()) / 1000);
+  return new Error(
+    `TradingView scanner is rate-limiting this IP (HTTP 429). ` +
+    `Backing off ${secondsLeft}s so the limit can clear — chart-based tools ` +
+    `(quote_get for the chart symbol, data_get_ohlcv) still work. ` +
+    `Reduce scanner call volume (batch tickers, poll ≥60s) to avoid this.`
+  );
+}
+
+async function classifyFetchFailure(url) {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: '{"columns":["name"],"range":[0,1]}',
+      signal: AbortSignal.timeout(10_000),
+    });
+    return r.status;
+  } catch {
+    return null; // Node can't reach it either — genuine network problem.
+  }
+}
+
+/**
+ * POST a scanner request body from inside the page and return
+ * { ok, status, body, textPreview }. Throws on fetch-level failure with an
+ * honest message: a Node-side probe distinguishes rate-limiting (429, opens
+ * the breaker) from real network/CORS trouble. All scanner callers
+ * (single-row, batch, screener, F&O) must go through this so the breaker
+ * sees every request.
+ */
+export async function scannerFetch(url, bodyJson) {
+  if (Date.now() < cooldownUntil) throw rateLimitError();
+
+  const expr = `
+    (async function() {
+      try {
+        const r = await fetch(${safeString(url)}, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: ${safeString(bodyJson)}
+        });
+        const text = await r.text();
+        let json = null;
+        try { json = JSON.parse(text); } catch (e) {}
+        return { ok: r.ok, status: r.status, body: json, textPreview: json ? null : text.slice(0, 400) };
+      } catch (e) {
+        return { ok: false, fetchError: e.message };
+      }
+    })()
+  `;
+  const res = await evaluateAsync(expr);
+  if (!res) throw new Error('No response from scanner endpoint');
+
+  if (res.fetchError || res.status === 429) {
+    const status = res.status === 429 ? 429 : await classifyFetchFailure(url);
+    if (status === 429) {
+      consecutive429s += 1;
+      const cooldown = Math.min(COOLDOWN_BASE_MS * 2 ** (consecutive429s - 1), COOLDOWN_MAX_MS);
+      cooldownUntil = Date.now() + cooldown;
+      throw rateLimitError();
+    }
+    if (res.fetchError) {
+      throw new Error(
+        `Scanner fetch failed: ${res.fetchError}` +
+        (status ? ` (endpoint answered HTTP ${status} outside the page — likely a CSP/CORS block)` : ' (endpoint unreachable — network problem)')
+      );
+    }
+  }
+
+  consecutive429s = 0;
+  return res;
+}
 
 /**
  * Fetch one symbol's columns and return a column→value map, or null if the
@@ -25,26 +116,7 @@ const SCANNER_BASE = 'https://scanner.tradingview.com';
 export async function scanRow(market, symbol, columns) {
   const url = `${SCANNER_BASE}/${encodeURIComponent(market)}/scan`;
   const body = JSON.stringify({ symbols: { tickers: [symbol] }, columns });
-  const expr = `
-    (async function() {
-      try {
-        const r = await fetch(${safeString(url)}, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: ${safeString(body)}
-        });
-        const text = await r.text();
-        let json = null;
-        try { json = JSON.parse(text); } catch (e) {}
-        return { ok: r.ok, status: r.status, body: json, textPreview: json ? null : text.slice(0, 300) };
-      } catch (e) {
-        return { ok: false, fetchError: e.message };
-      }
-    })()
-  `;
-  const res = await evaluateAsync(expr);
-  if (!res) throw new Error('No response from scanner endpoint');
-  if (res.fetchError) throw new Error(`Scanner fetch failed: ${res.fetchError}`);
+  const res = await scannerFetch(url, body);
 
   const scannerError = res.body && typeof res.body === 'object' ? res.body.error : null;
   if (!res.ok || scannerError) {
@@ -75,29 +147,43 @@ export async function scanRowByName(market, ticker, columns) {
     columns,
     range: [0, 1],
   });
-  const expr = `
-    (async function() {
-      try {
-        const r = await fetch(${safeString(url)}, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: ${safeString(body)}
-        });
-        const text = await r.text();
-        let json = null;
-        try { json = JSON.parse(text); } catch (e) {}
-        return { ok: r.ok, body: json };
-      } catch (e) {
-        return { ok: false, fetchError: e.message };
-      }
-    })()
-  `;
-  const res = await evaluateAsync(expr);
+  const res = await scannerFetch(url, body);
   const row = res?.body?.data?.[0];
   if (!row || !Array.isArray(row.d)) return null;
   const map = {};
   columns.forEach((c, i) => { map[c] = row.d[i]; });
   return { symbol: row.s, map };
+}
+
+/**
+ * Batch fetch: one scanner request for MANY tickers. Returns a Map of
+ * requested ticker → column map; tickers the scanner has no row for are
+ * simply absent. This is the volume-friendly path — N symbols cost one HTTP
+ * request instead of N (× the resolveRow retry ladder), which is what keeps
+ * a polling caller under CloudFront's per-IP rate limit.
+ */
+export async function scanRows(market, tickers, columns) {
+  const url = `${SCANNER_BASE}/${encodeURIComponent(market)}/scan`;
+  const body = JSON.stringify({ symbols: { tickers }, columns });
+  const res = await scannerFetch(url, body);
+
+  const scannerError = res.body && typeof res.body === 'object' ? res.body.error : null;
+  if (!res.ok || scannerError) {
+    throw new Error(
+      scannerError
+        ? `Scanner rejected query: ${scannerError}`
+        : `Scanner returned HTTP ${res.status}${res.textPreview ? `: ${res.textPreview}` : ''}`
+    );
+  }
+
+  const out = new Map();
+  for (const row of res.body?.data ?? []) {
+    if (!row || !Array.isArray(row.d)) continue;
+    const map = {};
+    columns.forEach((c, i) => { map[c] = row.d[i]; });
+    out.set(row.s, map);
+  }
+  return out;
 }
 
 // "global" is a universal superset scanner market (US/intl stocks, crypto,

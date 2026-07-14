@@ -2,7 +2,7 @@
  * Core data access logic.
  */
 import { evaluate, evaluateAsync, KNOWN_PATHS, safeString } from '../connection.js';
-import { resolveRow, getCurrentSymbol } from './_scanner.js';
+import { resolveRow, scanRows, getCurrentSymbol } from './_scanner.js';
 import * as backtest from './backtest.js';
 
 const MAX_OHLCV_BARS = 500;
@@ -60,6 +60,112 @@ function buildGraphicsJS(collectionName, mapKey, filter) {
   `;
 }
 
+/** Normalize a user timeframe to a TradingView session resolution ("15", "60", "D", "W", "M"). */
+export function normalizeResolution(tf) {
+  if (tf === undefined || tf === null || tf === '') return null;
+  const t = String(tf).trim().toUpperCase();
+  if (/^\d+$/.test(t)) return t;                       // minutes: "1", "15", "240"
+  if (/^\d+[SDWM]$/.test(t)) return t === '1D' ? 'D' : t === '1W' ? 'W' : t === '1M' ? 'M' : t;
+  if (['D', 'W', 'M', 'DAY', 'WEEK', 'MONTH', 'DAILY', 'WEEKLY', 'MONTHLY'].includes(t)) return t[0];
+  throw new Error(`Invalid timeframe "${tf}". Use minutes ("1", "15", "60", "240") or "D", "W", "M".`);
+}
+
+/** Shape a bar array into the compact summary used by summary=true. */
+export function buildOhlcvSummary(bars) {
+  const highs = bars.map(b => b.high);
+  const lows = bars.map(b => b.low);
+  const volumes = bars.map(b => b.volume);
+  const first = bars[0];
+  const last = bars[bars.length - 1];
+  return {
+    bar_count: bars.length,
+    period: { from: first.time, to: last.time },
+    open: first.open, close: last.close,
+    high: Math.max(...highs), low: Math.min(...lows),
+    range: Math.round((Math.max(...highs) - Math.min(...lows)) * 100) / 100,
+    change: Math.round((last.close - first.open) * 100) / 100,
+    change_pct: Math.round(((last.close - first.open) / first.open) * 10000) / 100 + '%',
+    avg_volume: Math.round(volumes.reduce((a, b) => a + b, 0) / volumes.length),
+    last_5_bars: bars.slice(-5),
+  };
+}
+
+// Fetch bars for any symbol/timeframe WITHOUT touching the visible chart: a
+// throwaway chart-session on the shared websocket transport (resolve_symbol →
+// create_series → collect data_update plots → series_completed → destroy).
+async function getOhlcvHeadless({ symbol, resolution, limit, timeout_ms }) {
+  const result = await evaluateAsync(`
+    (function() {
+      return new Promise(function(resolve) {
+        var done = false;
+        var barsByTime = {};
+        var info = null;
+        var session = null;
+        function finish(r) {
+          if (done) return;
+          done = true;
+          clearTimeout(tm);
+          try { if (session) session.destroy(); } catch (e) {}
+          resolve(r);
+        }
+        var tm = setTimeout(function() {
+          var bars = Object.keys(barsByTime).sort(function(a, b){ return a - b; }).map(function(k){ return barsByTime[k]; });
+          finish(bars.length ? { bars: bars, symbol_info: info, note: 'timed out waiting for series_completed; returning received bars' }
+                             : { error: 'Timed out waiting for data. Check the symbol is exchange-qualified (e.g. "NASDAQ:AAPL").' });
+        }, ${timeout_ms});
+        try {
+          var live = window.TradingViewApi._activeChartWidgetWV.value()._chartWidget.model().model().chartApi();
+          var Session = live.constructor;
+          session = new Session(live._getChartApi(), true);
+          session.connect(function(msg) {
+            if (msg.method === 'critical_error') finish({ error: 'Chart session critical error: ' + JSON.stringify(msg.params).slice(0, 200) });
+          });
+          session.resolveSymbol('sym_1', ${safeString(symbol)}, function(r) {
+            if (r.method === 'symbol_error') return finish({ error: 'Cannot resolve symbol ' + ${safeString(symbol)} + '. Use an exchange-qualified name like "NASDAQ:AAPL" or "NSE:RELIANCE".' });
+            try {
+              var p = r.params && r.params[1];
+              if (p) info = { symbol: p.pro_name || p.name, description: p.description, exchange: p.exchange, type: p.type, currency: p.currency_code, timezone: p.timezone, session: p.session };
+            } catch (e) {}
+            session.createSeries('sds_1', 's1', 'sym_1', ${safeString(resolution)}, ${limit}, null, function(dm) {
+              if (dm.method === 'data_update' && dm.params && dm.params.plots) {
+                var plots = dm.params.plots;
+                for (var i = 0; i < plots.length; i++) {
+                  var v = plots[i].value;
+                  if (v && v.length >= 5) barsByTime[v[0]] = { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0 };
+                }
+              } else if (dm.method === 'series_completed') {
+                var bars = Object.keys(barsByTime).sort(function(a, b){ return a - b; }).map(function(k){ return barsByTime[k]; });
+                finish({ bars: bars, symbol_info: info });
+              } else if (dm.method === 'series_error') {
+                finish({ error: 'No data for ' + ${safeString(symbol)} + ' at this timeframe (series_error).' });
+              }
+            });
+          });
+        } catch (e) { finish({ error: e.message }); }
+      });
+    })()
+  `);
+  if (!result) throw new Error('Headless OHLCV fetch returned nothing. Is a TradingView chart tab connected?');
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+
+/**
+ * Fetch OHLCV bars for ANY symbol at ANY timeframe through a throwaway
+ * headless chart session — the visible chart is never touched.
+ */
+export async function getSymbolOhlcv({ symbol, timeframe, count, summary, timeout_ms } = {}) {
+  const limit = Math.min(count || 100, MAX_OHLCV_BARS);
+  const sym = symbol || await getCurrentSymbol();
+  if (!sym) throw new Error('No symbol given and the current chart symbol could not be determined.');
+  const res = normalizeResolution(timeframe) || 'D';
+  const data = await getOhlcvHeadless({ symbol: sym, resolution: res, limit, timeout_ms: timeout_ms || 15000 });
+  if (!data.bars || data.bars.length === 0) throw new Error(`No bars returned for ${sym} @ ${res}.`);
+  const base = { success: true, symbol: sym, timeframe: res, source: 'headless_session', ...(data.note ? { note: data.note } : {}) };
+  if (summary) return { ...base, ...buildOhlcvSummary(data.bars), symbol_info: data.symbol_info };
+  return { ...base, bar_count: data.bars.length, symbol_info: data.symbol_info, bars: data.bars };
+}
+
 export async function getOhlcv({ count, summary } = {}) {
   const limit = Math.min(count || 100, MAX_OHLCV_BARS);
   let data;
@@ -85,23 +191,7 @@ export async function getOhlcv({ count, summary } = {}) {
   }
 
   if (summary) {
-    const bars = data.bars;
-    const highs = bars.map(b => b.high);
-    const lows = bars.map(b => b.low);
-    const volumes = bars.map(b => b.volume);
-    const first = bars[0];
-    const last = bars[bars.length - 1];
-    return {
-      success: true, bar_count: bars.length,
-      period: { from: first.time, to: last.time },
-      open: first.open, close: last.close,
-      high: Math.max(...highs), low: Math.min(...lows),
-      range: Math.round((Math.max(...highs) - Math.min(...lows)) * 100) / 100,
-      change: Math.round((last.close - first.open) * 100) / 100,
-      change_pct: Math.round(((last.close - first.open) / first.open) * 10000) / 100 + '%',
-      avg_volume: Math.round(volumes.reduce((a, b) => a + b, 0) / volumes.length),
-      last_5_bars: bars.slice(-5),
-    };
+    return { success: true, ...buildOhlcvSummary(data.bars) };
   }
 
   return { success: true, bar_count: data.bars.length, total_available: data.total_bars, source: data.source, bars: data.bars };
@@ -217,6 +307,52 @@ export async function getQuote({ symbol } = {}) {
     description: d.description ?? undefined,
     exchange: d.exchange ?? undefined,
     type: d.type ?? undefined,
+  };
+}
+
+/**
+ * Batch quotes: many symbols, ONE scanner request. Built for polling callers
+ * (position monitors) that used to fan out one getQuote per symbol and trip
+ * CloudFront's per-IP rate limit on scanner.tradingview.com. No resolveRow
+ * retry ladder here — a symbol the scanner has no row for (option contracts,
+ * exchange-prefix mismatches) comes back with quote:null rather than costing
+ * extra requests; callers price those elsewhere (options chain mid).
+ */
+export async function getQuotes({ symbols } = {}) {
+  const tickers = [...new Set((symbols ?? []).map(s => String(s).trim()).filter(Boolean))];
+  if (!tickers.length) throw new Error('symbols must be a non-empty array of exchange-qualified tickers');
+
+  const cols = ['close', 'open', 'high', 'low', 'volume', 'change', 'description', 'exchange', 'type'];
+  const rows = await scanRows('global', tickers, cols);
+
+  const quotes = tickers.map(symbol => {
+    const d = rows.get(symbol);
+    if (!d) return { symbol, quote: null };
+    const changePct = Number.isFinite(Number(d.change)) ? Math.round(Number(d.change) * 100) / 100 : null;
+    return {
+      symbol,
+      quote: {
+        open: d.open ?? null,
+        high: d.high ?? null,
+        low: d.low ?? null,
+        close: d.close ?? null,
+        last: d.close ?? null,
+        volume: d.volume ?? 0,
+        change_pct: changePct,
+        description: d.description ?? undefined,
+        exchange: d.exchange ?? undefined,
+        type: d.type ?? undefined,
+      },
+    };
+  });
+
+  return {
+    success: true,
+    source: 'scanner',
+    note: 'Snapshot from TradingView scanner (~per-minute, may lag realtime). quote:null = no scanner row for that symbol (e.g. option contracts).',
+    requested: tickers.length,
+    resolved: quotes.filter(q => q.quote).length,
+    quotes,
   };
 }
 

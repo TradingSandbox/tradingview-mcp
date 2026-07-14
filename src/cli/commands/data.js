@@ -7,12 +7,27 @@ register('quote', {
 });
 
 register('ohlcv', {
-  description: 'Get OHLCV bar data',
+  description: 'Get OHLCV bar data from the visible chart',
   options: {
     count: { type: 'string', short: 'n', description: 'Number of bars (default 100, max 500)' },
     summary: { type: 'boolean', short: 's', description: 'Return summary stats instead of all bars' },
   },
   handler: (opts) => core.getOhlcv({
+    count: opts.count ? Number(opts.count) : undefined,
+    summary: opts.summary,
+  }),
+});
+
+register('symbol-ohlcv', {
+  description: 'Fetch OHLCV for any symbol/timeframe headlessly (visible chart untouched). Usage: tv symbol-ohlcv NASDAQ:AAPL -t D',
+  options: {
+    timeframe: { type: 'string', short: 't', description: 'Resolution: 1, 15, 60, 240, D, W, M (default D)' },
+    count: { type: 'string', short: 'n', description: 'Number of bars (default 100, max 500)' },
+    summary: { type: 'boolean', short: 's', description: 'Return summary stats instead of all bars' },
+  },
+  handler: (opts, positionals) => core.getSymbolOhlcv({
+    symbol: positionals[0],
+    timeframe: opts.timeframe,
     count: opts.count ? Number(opts.count) : undefined,
     summary: opts.summary,
   }),

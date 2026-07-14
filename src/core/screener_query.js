@@ -13,9 +13,8 @@
  * Fetch spec and skips preflight. Body is still JSON — TV's server doesn't
  * care about the declared content type.
  */
-import { evaluate, evaluateAsync, safeString } from '../connection.js';
-
-const SCANNER_BASE = 'https://scanner.tradingview.com';
+import { evaluate } from '../connection.js';
+import { scannerFetch, SCANNER_BASE } from './_scanner.js';
 
 // Curated market slugs. The endpoint accepts more (every TV-supported
 // market has one), but these are the ones we've verified or that users will
@@ -123,49 +122,17 @@ export async function query(opts = {}) {
     };
   }
 
-  // Build the in-page fetch expression. JSON.stringify gives us a safe
-  // JS string literal we can embed (no manual escaping needed).
+  // scannerFetch runs the request in-page (carries TV cookies, dodges CORS
+  // preflight) and throws an honest, classified error on fetch-level failure
+  // — including "rate limited (HTTP 429), backing off" when CloudFront
+  // throttles this IP, which the page itself can only see as a bare
+  // "Failed to fetch" that used to get mislabeled a CORS block here.
   const url = `${SCANNER_BASE}/${encodeURIComponent(market)}/scan`;
-  const expr = `
-    (async function() {
-      try {
-        const r = await fetch(${safeString(url)}, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: ${safeString(JSON.stringify(body))}
-        });
-        const text = await r.text();
-        let json = null;
-        try { json = JSON.parse(text); } catch (e) {}
-        return {
-          ok: r.ok,
-          status: r.status,
-          contentType: r.headers.get("content-type"),
-          body: json,
-          textPreview: json ? null : text.slice(0, 400)
-        };
-      } catch (e) {
-        return { ok: false, fetchError: e.message };
-      }
-    })()
-  `;
-
-  const result = await evaluateAsync(expr);
-
-  if (!result) {
-    return { success: false, error: 'No response from scanner endpoint', market, request: body };
-  }
-  if (result.fetchError) {
-    // The only realistic fetchError here is a CORS/CSP block. We send
-    // text/plain specifically to avoid the preflight that "application/json"
-    // would trigger — so this should not happen, but surface it clearly.
-    return {
-      success: false,
-      error: `Fetch failed: ${result.fetchError}`,
-      hint: 'Network/CORS block. The scanner endpoint may be unreachable.',
-      market,
-      request: body,
-    };
+  let result;
+  try {
+    result = await scannerFetch(url, JSON.stringify(body));
+  } catch (e) {
+    return { success: false, error: e.message, market, request: body };
   }
 
   // The scanner reports query problems as HTTP 400 with a JSON body:
