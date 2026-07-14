@@ -70,6 +70,14 @@ export function registerDataTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
+  server.tool('quotes_get', 'Get quotes for MANY symbols in ONE scanner request (batch of quote_get). Returns {symbol, quote} per requested ticker in order; quote:null means the scanner has no row for it (e.g. option contracts — price those via options_chain). Use this instead of looping quote_get: N symbols cost one HTTP request, which keeps polling callers under TradingView\'s per-IP rate limit. Scanner data is a ~per-minute snapshot.', {
+    symbols: z.array(z.string()).min(1).describe('Exchange-qualified tickers (e.g. ["NSE:RELIANCE", "NASDAQ:AAPL", "MCX:GOLD1!"]).'),
+    target_id: targetIdParam,
+  }, async ({ symbols, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.getQuotes({ symbols }))); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
   server.tool('depth_get', 'Get order book / DOM (Depth of Market) data from the chart', {
     target_id: targetIdParam,
   }, async ({ target_id }) => {

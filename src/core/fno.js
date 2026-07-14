@@ -20,10 +20,9 @@
  *    `root` is EXCHANGE:CODE (e.g. "NYMEX:CL", "NSE:BPCL"), NOT the bare ticker.
  *    Continuous contracts (e.g. "BPCL1!") come back with a null expiration.
  */
-import { evaluate, evaluateAsync, safeString } from '../connection.js';
+import { evaluate } from '../connection.js';
 import { exchangeToMarket } from './screener_query.js';
-
-const SCANNER_BASE = 'https://scanner.tradingview.com';
+import { scannerFetch, SCANNER_BASE } from './_scanner.js';
 
 // Repo-wide cap on rows for the user-facing list (futures term structure).
 const MAX_ROWS = 500;
@@ -93,26 +92,7 @@ function daysToExpiry(ymd) {
  */
 async function scan(market, body) {
   const url = `${SCANNER_BASE}/${encodeURIComponent(market)}/scan`;
-  const expr = `
-    (async function() {
-      try {
-        const r = await fetch(${safeString(url)}, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: ${safeString(JSON.stringify(body))}
-        });
-        const text = await r.text();
-        let json = null;
-        try { json = JSON.parse(text); } catch (e) {}
-        return { ok: r.ok, status: r.status, body: json, textPreview: json ? null : text.slice(0, 300) };
-      } catch (e) {
-        return { ok: false, fetchError: e.message };
-      }
-    })()
-  `;
-  const res = await evaluateAsync(expr);
-  if (!res) throw new Error('No response from scanner endpoint');
-  if (res.fetchError) throw new Error(`Scanner fetch failed: ${res.fetchError}`);
+  const res = await scannerFetch(url, JSON.stringify(body));
 
   const scannerError = res.body && typeof res.body === 'object' ? res.body.error : null;
   if (!res.ok || scannerError) {

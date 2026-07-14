@@ -2,7 +2,7 @@
  * Core data access logic.
  */
 import { evaluate, evaluateAsync, KNOWN_PATHS, safeString } from '../connection.js';
-import { resolveRow, getCurrentSymbol } from './_scanner.js';
+import { resolveRow, scanRows, getCurrentSymbol } from './_scanner.js';
 import * as backtest from './backtest.js';
 
 const MAX_OHLCV_BARS = 500;
@@ -307,6 +307,52 @@ export async function getQuote({ symbol } = {}) {
     description: d.description ?? undefined,
     exchange: d.exchange ?? undefined,
     type: d.type ?? undefined,
+  };
+}
+
+/**
+ * Batch quotes: many symbols, ONE scanner request. Built for polling callers
+ * (position monitors) that used to fan out one getQuote per symbol and trip
+ * CloudFront's per-IP rate limit on scanner.tradingview.com. No resolveRow
+ * retry ladder here — a symbol the scanner has no row for (option contracts,
+ * exchange-prefix mismatches) comes back with quote:null rather than costing
+ * extra requests; callers price those elsewhere (options chain mid).
+ */
+export async function getQuotes({ symbols } = {}) {
+  const tickers = [...new Set((symbols ?? []).map(s => String(s).trim()).filter(Boolean))];
+  if (!tickers.length) throw new Error('symbols must be a non-empty array of exchange-qualified tickers');
+
+  const cols = ['close', 'open', 'high', 'low', 'volume', 'change', 'description', 'exchange', 'type'];
+  const rows = await scanRows('global', tickers, cols);
+
+  const quotes = tickers.map(symbol => {
+    const d = rows.get(symbol);
+    if (!d) return { symbol, quote: null };
+    const changePct = Number.isFinite(Number(d.change)) ? Math.round(Number(d.change) * 100) / 100 : null;
+    return {
+      symbol,
+      quote: {
+        open: d.open ?? null,
+        high: d.high ?? null,
+        low: d.low ?? null,
+        close: d.close ?? null,
+        last: d.close ?? null,
+        volume: d.volume ?? 0,
+        change_pct: changePct,
+        description: d.description ?? undefined,
+        exchange: d.exchange ?? undefined,
+        type: d.type ?? undefined,
+      },
+    };
+  });
+
+  return {
+    success: true,
+    source: 'scanner',
+    note: 'Snapshot from TradingView scanner (~per-minute, may lag realtime). quote:null = no scanner row for that symbol (e.g. option contracts).',
+    requested: tickers.length,
+    resolved: quotes.filter(q => q.quote).length,
+    quotes,
   };
 }
 
