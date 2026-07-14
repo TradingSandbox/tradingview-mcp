@@ -438,6 +438,31 @@ function parseDateMs(v, name) {
   return ts;
 }
 
+export function resolveOptimizeRange({ range_preset, range_from, range_to, now_ms = Date.now() } = {}) {
+  if (!range_preset && !range_from && !range_to) return null;
+  if (range_preset && (range_from || range_to)) {
+    throw new Error('Pass range_preset or range_from+range_to, not both.');
+  }
+  let fromMs, toMs;
+  if (range_preset) {
+    if (range_preset === 'entire_history') {
+      fromMs = Date.UTC(1990, 0, 1);
+      toMs = now_ms;
+    } else if (RANGE_PRESETS[range_preset]) {
+      toMs = now_ms;
+      fromMs = toMs - RANGE_PRESETS[range_preset] * 86400e3;
+    } else {
+      throw new Error(`Unknown range_preset "${range_preset}". Valid: ${Object.keys(RANGE_PRESETS).join(', ')}, entire_history`);
+    }
+  } else {
+    if (!range_from || !range_to) throw new Error('Pass both range_from and range_to.');
+    fromMs = parseDateMs(range_from, 'range_from');
+    toMs = parseDateMs(range_to, 'range_to');
+    if (fromMs >= toMs) throw new Error('range_from must be earlier than range_to.');
+  }
+  return { fromMs, toMs };
+}
+
 export async function setBacktestRange({ action, from, to, preset, timeout_ms, _deps } = {}) {
   const { evaluate, evaluateAsync } = _resolve(_deps);
 
@@ -532,7 +557,34 @@ export async function setBacktestRange({ action, from, to, preset, timeout_ms, _
 
 // ── Parameter sweep ──────────────────────────────────────────────────────
 
-export async function optimize({ entity_id, grid: gridRaw, metric, max_combinations, timeout_ms, _deps } = {}) {
+function shapeOptimizerDiagnostics(raw, initialCapital) {
+  const rawTrades = Array.isArray(raw?.trades) ? raw.trades : [];
+  const trades = rawTrades.map(mapTrade);
+  const cap = typeof initialCapital === 'number' ? initialCapital : 0;
+  const buyHold = Array.isArray(raw?.buyHold) ? raw.buyHold : [];
+  const points = [{ time: null, trade_index: null, equity: cap || (buyHold[0] ?? null), buy_hold: buyHold[0] ?? null }];
+  rawTrades.forEach((trade, index) => {
+    if (!trade.x || !trade.cp) return;
+    points.push({
+      time: trade.x.tm,
+      trade_index: index,
+      equity: cap ? +(cap + trade.cp.v).toFixed(2) : +trade.cp.v.toFixed(2),
+      buy_hold: buyHold[index + 1] ?? null,
+    });
+  });
+  return {
+    trade_summary: summarizeTrades(trades),
+    recent_trades: trades.slice(-50),
+    equity: {
+      initial_capital: cap || null,
+      final_equity: points.length > 1 ? points.at(-1).equity : null,
+      total_points: points.length,
+      points: downsample(points, 100),
+    },
+  };
+}
+
+export async function optimize({ entity_id, grid: gridRaw, metric, max_combinations, timeout_ms, range_preset, range_from, range_to, diagnostics, retain_inputs, _deps } = {}) {
   const { evaluate, evaluateAsync } = _resolve(_deps);
   const grid = gridRaw ? (typeof gridRaw === 'string' ? JSON.parse(gridRaw) : gridRaw) : undefined;
   if (!grid || typeof grid !== 'object' || Object.keys(grid).length === 0) {
@@ -545,6 +597,7 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
   const rankMetric = metric || 'netProfit';
   const cap = Math.min(max_combinations || OPTIMIZE_DEFAULT_COMBOS, OPTIMIZE_MAX_COMBOS);
   const perRunTimeout = timeout_ms || 45000;
+  const range = resolveOptimizeRange({ range_preset, range_from, range_to });
 
   // Resolve the strategy's inputs, matching grid keys by id, internalID, or name.
   const meta = await evaluate(`
@@ -584,8 +637,12 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
   if (combos.length > cap) {
     throw new Error(`Grid has ${combos.length} combinations — over the cap of ${cap}. Reduce the grid or raise max_combinations (hard cap ${OPTIMIZE_MAX_COMBOS}).`);
   }
+  if ((diagnostics || retain_inputs) && combos.length !== 1) {
+    throw new Error('diagnostics and retain_inputs require exactly one parameter combination.');
+  }
+  const initialCapital = meta.inputs.find((input) => input.internalID === 'initial_capital')?.current;
 
-  const runCombo = async (overrides) => evaluateAsync(`
+  const runCombo = async (overrides, applyRange = true, captureDiagnostics = false) => evaluateAsync(`
     (function() {
       try {
         ${findStrategySnippet(entity_id)}
@@ -599,6 +656,49 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
         return ${waitRecalcSnippet('facade.setInputValues(inputs);', String(perRunTimeout))}.then(function(w) {
           if (w.event === 'error') return { error: w.error || 'strategy error' };
           if (w.event === 'timeout') return { error: 'recalculation timed out' };
+          ${range ? `
+          if (${applyRange ? 'true' : 'false'}) {
+            return window.TradingViewApi.backtestingStrategyApi().then(function(deep) {
+              window.__tvmcpDeep = { active: true, facade: deep };
+              deep.setReportDataSource(true);
+              deep.requestDeepBacktestingData(${range.fromMs}, ${range.toMs});
+              return new Promise(function(resolve) {
+                var t0 = Date.now();
+                var iv = setInterval(function() {
+                  var st = null;
+                  try { st = deep.activeStrategyStatus.value(); } catch (e) {}
+                  if (st && st.type === ${STUDY_STATUS.COMPLETED}) {
+                    clearInterval(iv);
+                    var rd = null;
+                    try { rd = deep.activeStrategyReportData.value(); } catch (e) {}
+                    if (!rd || !rd.performance || !rd.performance.all) return resolve({ error: 'no deep report after recalculation' });
+                    var a = rd.performance.all;
+                    return resolve({ metrics: {
+                      netProfit: a.netProfit,
+                      netProfitPercent: a.netProfitPercent,
+                      totalTrades: a.totalTrades,
+                      percentProfitable: a.percentProfitable,
+                      profitFactor: a.profitFactor,
+                      maxStrategyDrawDown: rd.performance.maxStrategyDrawDown,
+                      maxStrategyDrawDownPercent: rd.performance.maxStrategyDrawDownPercent,
+                      sharpeRatio: rd.performance.sharpeRatio,
+                      sortinoRatio: rd.performance.sortinoRatio,
+                      avgTrade: a.avgTrade,
+                    }, diagnostics: ${captureDiagnostics ? '{ trades: rd.trades || [], buyHold: rd.buyHold || [] }' : 'undefined'} });
+                  }
+                  if (st && st.type === ${STUDY_STATUS.ERROR}) {
+                    clearInterval(iv);
+                    return resolve({ error: (st.errorDescription && st.errorDescription.error) || 'deep backtest error' });
+                  }
+                  if (Date.now() - t0 > ${perRunTimeout}) {
+                    clearInterval(iv);
+                    return resolve({ error: 'deep backtest recalculation timed out' });
+                  }
+                }, 400);
+              });
+            }).catch(function(e) { return { error: e.message }; });
+          }
+          ` : ''}
           var rd = __strat.reportData();
           if (rd && typeof rd.value === 'function') rd = rd.value();
           if (!rd || !rd.performance || !rd.performance.all) return { error: 'no report after recalculation' };
@@ -614,7 +714,7 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
             sharpeRatio: rd.performance.sharpeRatio,
             sortinoRatio: rd.performance.sortinoRatio,
             avgTrade: a.avgTrade,
-          } };
+          }, diagnostics: ${captureDiagnostics ? '{ trades: rd.trades || [], buyHold: rd.buyHold || [] }' : 'undefined'} };
         });
       } catch (e) { return Promise.resolve({ error: e.message }); }
     })()
@@ -625,7 +725,7 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
   try {
     for (const combo of combos) {
       const labeled = Object.fromEntries(Object.entries(combo).map(([id, v]) => [resolvedGrid[id].label, v]));
-      const run = await runCombo(combo);
+      const run = await runCombo(combo, true, !!diagnostics);
       if (run?.error) {
         results.push({ inputs: labeled, error: run.error });
       } else {
@@ -638,15 +738,31 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
             percentProfitable: typeof m.percentProfitable === 'number' ? +(m.percentProfitable * 100).toFixed(4) : m.percentProfitable,
             maxStrategyDrawDownPercent: typeof m.maxStrategyDrawDownPercent === 'number' ? +(m.maxStrategyDrawDownPercent * 100).toFixed(4) : m.maxStrategyDrawDownPercent,
           },
+          ...(run.diagnostics ? { diagnostics: shapeOptimizerDiagnostics(run.diagnostics, initialCapital) } : {}),
         });
       }
     }
   } finally {
-    // Always restore original inputs
-    try {
-      await runCombo(originals);
-      restored = true;
-    } catch { /* reported below */ }
+    // Always restore original inputs unless the singleton caller explicitly owns restoration.
+    if (!retain_inputs) {
+      try {
+        await runCombo(originals, false);
+        restored = true;
+      } catch { /* reported below */ }
+    }
+    if (range) {
+      try {
+        await evaluateAsync(`
+          (function() {
+            if (!window.__tvmcpDeep || !window.__tvmcpDeep.facade) return Promise.resolve({ reset: false });
+            var f = window.__tvmcpDeep.facade;
+            try { f.setReportDataSource(false); f.resetDeepBacktestingReportData(); } catch (e) {}
+            window.__tvmcpDeep.active = false;
+            return Promise.resolve({ reset: true });
+          })()
+        `);
+      } catch { /* best effort */ }
+    }
   }
 
   const ok = results.filter((r) => r.metrics);
@@ -667,7 +783,9 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
     best: ok[0] || null,
     results: ok.concat(results.filter((r) => r.error)),
     inputs_restored: restored,
-    ...(restored ? {} : { warning: 'Failed to restore original input values — check the strategy settings.' }),
-    note: 'Percent metrics converted to percentages. Original inputs were restored after the sweep.',
+    inputs_retained: !!retain_inputs,
+    backtest_range: range ? { from: range.fromMs, to: range.toMs, mode: 'deep' } : { mode: 'standard_chart' },
+    ...(!restored && !retain_inputs ? { warning: 'Failed to restore original input values — check the strategy settings.' } : {}),
+    note: retain_inputs ? 'Percent metrics converted to percentages. Evaluated inputs remain active; caller must restore them.' : 'Percent metrics converted to percentages. Original inputs were restored after the sweep.',
   };
 }

@@ -37,15 +37,20 @@ export function registerBacktestTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('strategy_optimize', 'Parameter sweep: test every combination of the given input values, collect performance metrics per run, rank them and restore the original inputs. Grid keys match by input name ("Swing length"), id ("in_1"), or strategy property internalID. Runs on the standard chart backtest (not deep mode). Combinations are capped (default 30, hard cap 100) — each one is a full server-side recalculation taking a few seconds.', {
+  server.tool('strategy_optimize', 'Parameter sweep over the standard chart backtest or an explicit Deep Backtesting date range. Tests every combination, ranks results, and restores original inputs and report mode. Grid keys match by input name ("Swing length"), id ("in_1"), or strategy property internalID.', {
     grid: z.string().describe('JSON object mapping input → array of values, e.g. \'{"Swing length": [30, 50, 70], "ATR stop multiplier": [1.5, 2, 2.5]}\' (9 combinations)'),
     metric: z.string().optional().describe('Metric to rank by (default netProfit). Options: netProfit, netProfitPercent, profitFactor, percentProfitable, sharpeRatio, sortinoRatio, maxStrategyDrawDown (ranked ascending), totalTrades, avgTrade'),
     max_combinations: z.coerce.number().optional().describe('Abort if the grid exceeds this many combinations (default 30, hard cap 100)'),
     entity_id: entityIdParam,
     timeout_ms: z.coerce.number().optional().describe('Max ms to wait per combination (default 45000)'),
+    range_preset: z.string().optional().describe('Optional Deep Backtesting range: last_7d, last_30d, last_90d, last_365d, entire_history'),
+    range_from: z.string().optional().describe('Optional custom Deep Backtesting start date (ISO date or unix timestamp); requires range_to'),
+    range_to: z.string().optional().describe('Optional custom Deep Backtesting end date (ISO date or unix timestamp); requires range_from'),
+    diagnostics: z.coerce.boolean().optional().describe('For a singleton grid, include trade summary, recent trades, and equity curve diagnostics'),
+    retain_inputs: z.coerce.boolean().optional().describe('For a singleton grid, leave evaluated inputs active instead of restoring them; caller must restore'),
     target_id: targetIdParam,
-  }, async ({ grid, metric, max_combinations, entity_id, timeout_ms, target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.optimize({ grid, metric, max_combinations, entity_id, timeout_ms }))); }
+  }, async ({ grid, metric, max_combinations, entity_id, timeout_ms, range_preset, range_from, range_to, diagnostics, retain_inputs, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.optimize({ grid, metric, max_combinations, entity_id, timeout_ms, range_preset, range_from, range_to, diagnostics, retain_inputs }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 }

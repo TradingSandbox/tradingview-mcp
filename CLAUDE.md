@@ -1,6 +1,6 @@
 # TradingView MCP — Claude Instructions
 
-97 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+101 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
 
@@ -71,6 +71,16 @@ Rules: without `strategy_set_backtest_range`, results depend on how many bars th
 4. `replay_trade` with `action: "buy"/"sell"/"close"` → execute trades (optional `quantity`)
 5. `replay_status` → check position, P&L, current date
 6. `replay_stop` → return to realtime
+
+### "Order flow / volume profile"
+Volume-by-price studies (premium) expose their full histogram internally — readable per price row with the buy/sell split.
+
+1. `volume_profile_manage` with `action: "add"` → put a profile on the chart. Types: `visible_range` (default), `session`, `fixed_range`, `periodic`, `footprint`. These CANNOT be added via `chart_manage_indicator` (not java studies)
+2. `data_get_volume_profile` → per price row: `up_volume`/`down_volume` (buy/sell), `total_volume`, `delta`, `in_value_area` — plus POC (highest-volume row), value area high/low, and per-profile totals. Session/periodic types return one profile per session. Use `max_rows` to cap output
+3. `data_get_order_flow` → per-candle order flow (footprint): buy/sell volume at EVERY price level inside each candle, `imbalance` flags, per-candle POC + value area, candle `delta`, plus stacked-imbalance / unfinished-auction markers. Needs a Volume Footprint study on the chart (`volume_profile_manage` type `footprint`). `count` = most-recent candles (default 10, cap 100); **`summary: true`** = per-candle totals without levels
+4. `volume_profile_manage` with `action: "remove"` + `entity_id` → take it off again
+
+Notes: needs a TradingView plan with volume profile / footprint.
 
 ### "Screen multiple symbols"
 - `batch_run` with `symbols: ["ES1!", "NQ1!", "YM1!"]` and `action: "screenshot"` or `"get_ohlcv"`
@@ -170,6 +180,8 @@ These tools can return large payloads. Follow these rules to avoid context bloat
 | `technicals_get` | ~1 KB (one bucketed snapshot) |
 | `news_list` | ~1-3 KB (20 headlines, no bodies) |
 | `news_read` | ~1-5 KB per story (full body) |
+| `data_get_volume_profile` | ~2-6 KB per profile (row count depends on study settings) |
+| `data_get_order_flow` (10 candles) | ~4-8 KB (use summary=true for ~1 KB) |
 | `capture_screenshot` | ~300 bytes (returns file path, not image data) |
 
 ## Tool Conventions

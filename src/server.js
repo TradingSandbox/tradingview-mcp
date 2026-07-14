@@ -10,6 +10,7 @@ import { registerAlertTools } from './tools/alerts.js';
 import { registerBatchTools } from './tools/batch.js';
 import { registerReplayTools } from './tools/replay.js';
 import { registerBacktestTools } from './tools/backtest.js';
+import { registerOrderflowTools } from './tools/orderflow.js';
 import { registerIndicatorTools } from './tools/indicators.js';
 import { registerWatchlistTools } from './tools/watchlist.js';
 import { registerScreenerQueryTools } from './tools/screener_query.js';
@@ -28,7 +29,7 @@ const server = new McpServer(
     description: 'AI-assisted TradingView chart analysis and Pine Script development via Chrome DevTools Protocol',
   },
   {
-    instructions: `TradingView MCP — 97 tools for reading and controlling a live TradingView Desktop chart.
+    instructions: `TradingView MCP — 101 tools for reading and controlling a live TradingView Desktop chart.
 
 TOOL SELECTION GUIDE — use this to pick the right tool:
 
@@ -74,13 +75,18 @@ News (symbol/market news, from TradingView's news service):
 - news_list → recent headlines for a symbol (id, title, provider, age, urgency, related symbols). Cheap — bodies NOT included. Auto-detects the chart symbol; pass symbol= / limit= (default 20, cap 50)
 - news_read → full article body (plain text) for one headline id from news_list. Lazy, so news_list stays small
 
+Order flow / volume profile:
+- data_get_volume_profile → volume-at-price rows with buy/sell split (up/down volume, delta), POC, value area (VAH/VAL) from any volume-by-price study on the chart. Session/periodic types return one profile per session
+- data_get_order_flow → per-candle order flow (footprint): buy/sell volume per price level, imbalance flags, per-candle POC/VA, candle delta (needs a footprint study; summary=true for totals only)
+- volume_profile_manage → add/remove a volume profile / footprint study (visible_range, session, fixed_range, periodic, footprint) — these premium studies cannot be added via chart_manage_indicator
+
 Backtesting (Strategy Tester, requires a strategy on the chart):
 - data_get_strategy_results → performance metrics (net profit, win rate, profit factor, DD, Sharpe/Sortino; all/long/short buckets)
 - data_get_trades → per-trade list (most recent first window; offset= to page back, summary=true for aggregate stats)
 - data_get_equity → equity curve per closed trade + buy&hold, downsampled (max_points=, default 100)
 - strategy_get_properties / strategy_set_properties → read/change initial capital, commission, slippage, order size, pyramiding, margin — waits for recalc
 - strategy_set_backtest_range → run over an explicit date range via Deep Backtesting (from/to or preset last_7d/last_30d/last_90d/last_365d/entire_history; action="reset" to go back). While active, the three data tools above read the deep report
-- strategy_optimize → parameter sweep over a grid of input values, ranked results, restores original inputs
+- strategy_optimize → parameter sweep over chart history or an explicit deep-backtest range, ranked results, restores original inputs/report mode
 
 Screenshots: capture_screenshot → regions: "full", "chart", "strategy_tester"
 Replay: replay_start → replay_step (count= to advance N bars) → replay_trade (quantity=) → replay_status → replay_stop
@@ -113,6 +119,7 @@ registerAlertTools(server);
 registerBatchTools(server);
 registerReplayTools(server);
 registerBacktestTools(server);
+registerOrderflowTools(server);
 registerIndicatorTools(server);
 registerWatchlistTools(server);
 registerScreenerQueryTools(server);
