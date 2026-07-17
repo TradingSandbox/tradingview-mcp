@@ -5,6 +5,11 @@
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
 
+// CDP modifier bitmask: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift. TradingView binds its
+// editor shortcuts to Cmd on macOS and Ctrl elsewhere; the server drives a
+// desktop app on the same machine, so process.platform decides.
+const SHORTCUT_MODIFIER = process.platform === 'darwin' ? 4 : 2;
+
 // ── Monaco finder (injected into TV page) ──
 const FIND_MONACO = `
   (function findMonacoEditor() {
@@ -311,8 +316,8 @@ export async function compile() {
 
   if (!clicked) {
     const c = await getClient();
-    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
+    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    await c.Input.dispatchKeyEvent({ type: 'keyUp', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter' });
   }
 
   await new Promise(r => setTimeout(r, 2000));
@@ -349,8 +354,8 @@ export async function save() {
   if (!editorReady) throw new Error('Could not open Pine Editor.');
 
   const c = await getClient();
-  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
-  await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 's', code: 'KeyS' });
+  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: SHORTCUT_MODIFIER, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
+  await c.Input.dispatchKeyEvent({ type: 'keyUp', modifiers: SHORTCUT_MODIFIER, key: 's', code: 'KeyS' });
   await new Promise(r => setTimeout(r, 800));
 
   // Handle "Save Script" name dialog that appears for new/unsaved scripts
@@ -430,43 +435,66 @@ export async function smartCompile() {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
 
-  const studiesBefore = await evaluate(`
+  // The apply gesture differs by state: Cmd/Ctrl+Enter always ADDS a new study
+  // instance (duplicating an applied script), while saving an applied script
+  // recompiles it in place. So detect whether the editor's script is already
+  // on the chart before choosing.
+  const before = await evaluate(`
     (function() {
+      var names = null;
       try {
         var chart = window.TradingViewApi._activeChartWidgetWV.value();
-        if (chart && typeof chart.getAllStudies === 'function') return chart.getAllStudies().length;
-      } catch(e) {}
-      return null;
-    })()
-  `);
-
-  const buttonClicked = await evaluate(`
-    (function() {
-      var btns = document.querySelectorAll('button');
-      var addBtn = null;
-      var updateBtn = null;
-      var saveBtn = null;
-      for (var i = 0; i < btns.length; i++) {
-        var text = btns[i].textContent.trim();
-        if (/save and add to chart/i.test(text)) {
-          btns[i].click();
-          return 'Save and add to chart';
+        if (chart && typeof chart.getAllStudies === 'function') {
+          names = chart.getAllStudies().map(function(s) { return s.name || s.title || ''; });
         }
-        if (!addBtn && /^add to chart$/i.test(text)) addBtn = btns[i];
-        if (!updateBtn && /^update on chart$/i.test(text)) updateBtn = btns[i];
-        if (!saveBtn && btns[i].className.indexOf('saveButton') !== -1 && btns[i].offsetParent !== null) saveBtn = btns[i];
+      } catch(e) {}
+      var title = null;
+      var m = ${FIND_MONACO};
+      if (m && m.editor.getModel()) {
+        var src = m.editor.getModel().getValue();
+        var tm = src.match(/(?:strategy|indicator)\\s*\\(\\s*"([^"]*)"/);
+        if (tm) title = tm[1];
       }
-      if (addBtn) { addBtn.click(); return 'Add to chart'; }
-      if (updateBtn) { updateBtn.click(); return 'Update on chart'; }
-      if (saveBtn) { saveBtn.click(); return 'Pine Save'; }
-      return null;
+      return { names: names, title: title };
     })()
   `);
 
-  if (!buttonClicked) {
-    const c = await getClient();
-    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
+  const studiesBefore = Array.isArray(before?.names) ? before.names.length : null;
+  const alreadyOnChart = !!(before?.title && Array.isArray(before?.names) && before.names.indexOf(before.title) !== -1);
+
+  let action;
+  if (alreadyOnChart) {
+    await save();
+    action = 'save_update_in_place';
+  } else {
+    action = await evaluate(`
+      (function() {
+        var btns = document.querySelectorAll('button');
+        var addBtn = null;
+        var updateBtn = null;
+        for (var i = 0; i < btns.length; i++) {
+          var text = btns[i].textContent.trim();
+          if (/save and add to chart/i.test(text)) {
+            btns[i].click();
+            return 'Save and add to chart';
+          }
+          if (!addBtn && /^add to chart$/i.test(text)) addBtn = btns[i];
+          if (!updateBtn && /^update on chart$/i.test(text)) updateBtn = btns[i];
+        }
+        if (addBtn) { addBtn.click(); return 'Add to chart'; }
+        if (updateBtn) { updateBtn.click(); return 'Update on chart'; }
+        return null;
+      })()
+    `);
+
+    if (!action) {
+      // Desktop builds render no add/update buttons in the DOM; CDP key events
+      // are trusted input, so the platform shortcut works where JS clicks can't.
+      const c = await getClient();
+      await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await c.Input.dispatchKeyEvent({ type: 'keyUp', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter' });
+      action = 'keyboard_shortcut';
+    }
   }
 
   await new Promise(r => setTimeout(r, 2500));
@@ -498,10 +526,11 @@ export async function smartCompile() {
 
   return {
     success: true,
-    button_clicked: buttonClicked || 'keyboard_shortcut',
+    button_clicked: action,
+    already_on_chart: alreadyOnChart,
     has_errors: errors?.length > 0,
     errors: errors || [],
-    study_added: studyAdded,
+    study_added: alreadyOnChart ? false : studyAdded,
   };
 }
 
