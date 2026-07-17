@@ -36,9 +36,10 @@ export function registerDataTools(server) {
 
   server.tool('data_get_strategy_results', 'Get strategy performance metrics from the Strategy Tester (net profit, win rate, profit factor, drawdown, Sharpe/Sortino — with all/long/short buckets). Reads the deep-backtest report when strategy_set_backtest_range is active.', {
     entity_id: z.string().optional().describe('Strategy entity ID (from chart_get_state). Omit to use the first strategy on the chart.'),
+    title: z.string().optional().describe('Only match the strategy with this exact script title (the strategy("…") name). Errors with the list of strategies on the chart when none matches.'),
     target_id: targetIdParam,
-  }, async ({ entity_id, target_id }) => {
-    try { return jsonResult(await withTarget(target_id, () => core.getStrategyResults({ entity_id }))); }
+  }, async ({ entity_id, title, target_id }) => {
+    try { return jsonResult(await withTarget(target_id, () => core.getStrategyResults({ entity_id, title }))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
