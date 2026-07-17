@@ -69,15 +69,38 @@ function _resolve(deps) {
 
 // ── Page-side snippet builders ───────────────────────────────────────────
 
-/** Find the strategy source (+ facade study handle). Defines __chartApi, __strat. */
-function findStrategySnippet(entityId) {
-  const byId = entityId ? `s.id() === ${JSON.stringify(entityId)} && ` : '';
+/**
+ * Find the strategy source (+ facade study handle). Defines __chartApi, __strat,
+ * and __stratNames (every live strategy's shortDescription, for diagnostics).
+ *
+ * Two filters beyond isTVScriptStrategy:
+ * - Cross-check against getAllStudies(): the data-source model can retain a
+ *   strategy that was removed from the chart, and reading that ghost reports a
+ *   strategy the chart is no longer running.
+ * - Optional title match (metaInfo().shortDescription): callers verifying a
+ *   specific script must not be answered with whichever strategy happens to be
+ *   first in the model.
+ */
+function findStrategySnippet(entityId, title) {
+  const conds = [];
+  if (entityId) conds.push(`s.id() === ${JSON.stringify(entityId)}`);
+  if (title) conds.push(`(mi.shortDescription || '') === ${JSON.stringify(title)}`);
+  const extra = conds.length ? `${conds.join(' && ')} && ` : '';
   return `
     var __chartApi = ${CHART_API};
     var __chart = __chartApi._chartWidget;
+    var __live = null;
+    try {
+      __live = {};
+      __chartApi.getAllStudies().forEach(function(st) { if (st && st.id) __live[st.id] = true; });
+    } catch (e) { __live = null; }
+    var __stratNames = [];
     var __strats = __chart.model().model().dataSources().filter(function(s) {
       var mi = s.metaInfo && s.metaInfo();
-      return mi && mi.isTVScriptStrategy && ${byId ? byId.slice(0, -3) : 'true'};
+      if (!(mi && mi.isTVScriptStrategy)) return false;
+      if (__live && !__live[s.id()]) return false;
+      __stratNames.push(mi.shortDescription || '');
+      return ${extra}true;
     });
     var __strat = __strats[0] || null;
   `;
@@ -195,13 +218,13 @@ export function gridCombos(grid) {
 
 // ── Report / trades / equity ─────────────────────────────────────────────
 
-export async function getStrategyResults({ entity_id, _deps } = {}) {
+export async function getStrategyResults({ entity_id, title, _deps } = {}) {
   const { evaluate } = _resolve(_deps);
   const raw = await evaluate(`
     (function() {
       try {
-        ${findStrategySnippet(entity_id)}
-        if (!__strat) return { error: ${JSON.stringify(NO_STRATEGY_ERROR)} };
+        ${findStrategySnippet(entity_id, title)}
+        if (!__strat) return { error: ${JSON.stringify(NO_STRATEGY_ERROR)}, available_strategies: __stratNames };
         ${READ_REPORT_SNIPPET}
         if (!__report) {
           var st = null;
@@ -220,7 +243,10 @@ export async function getStrategyResults({ entity_id, _deps } = {}) {
       } catch (e) { return { error: e.message }; }
     })()
   `);
-  if (raw?.error) throw new Error(raw.error);
+  if (raw?.error) {
+    const names = Array.isArray(raw.available_strategies) ? raw.available_strategies.filter(Boolean) : [];
+    throw new Error(names.length ? `${raw.error} Strategies on chart: ${names.join(', ')}.` : raw.error);
+  }
   const metrics = shapeMetrics(raw.performance);
   return {
     success: true,

@@ -5,7 +5,18 @@
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
 
+// CDP modifier bitmask: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift. TradingView binds its
+// editor shortcuts to Cmd on macOS and Ctrl elsewhere; the server drives a
+// desktop app on the same machine, so process.platform decides.
+const SHORTCUT_MODIFIER = process.platform === 'darwin' ? 4 : 2;
+
 // ── Monaco finder (injected into TV page) ──
+// The Pine editor accumulates one Monaco instance per script tab it has ever
+// shown (verified live: 4 editors, 3 of them hidden 0×0). editors[0] is
+// whichever tab was created first, NOT the active one — writing there edits a
+// background tab while Add-to-chart applies the ACTIVE tab. Pick the editor
+// whose DOM node is actually visible (preferring the focused one); only fall
+// back to editors[0] when none is rendered.
 const FIND_MONACO = `
   (function findMonacoEditor() {
     var container = document.querySelector('.monaco-editor.pine-editor-monaco');
@@ -26,7 +37,16 @@ const FIND_MONACO = `
         var env = current.memoizedProps.value.monacoEnv;
         if (env.editor && typeof env.editor.getEditors === 'function') {
           var editors = env.editor.getEditors();
-          if (editors.length > 0) return { editor: editors[0], env: env };
+          if (editors.length === 0) return null;
+          var pick = null;
+          for (var j = 0; j < editors.length; j++) {
+            var node = editors[j].getDomNode && editors[j].getDomNode();
+            if (!node) continue;
+            var rect = node.getBoundingClientRect();
+            var visible = node.offsetParent !== null && rect.width > 0 && rect.height > 0;
+            if (visible && (!pick || editors[j].hasTextFocus())) pick = editors[j];
+          }
+          return { editor: pick || editors[0], env: env };
         }
       }
       current = current.return;
@@ -34,6 +54,24 @@ const FIND_MONACO = `
     return null;
   })()
 `;
+
+/**
+ * Give the Pine editor keyboard focus. Editor shortcuts (Cmd/Ctrl+S,
+ * Cmd/Ctrl+Enter) resolve against Monaco's focus tracker, not just the DOM
+ * activeElement — without this, trusted CDP key events land on the page and
+ * the editor bindings never fire (verified live: the same Cmd+Enter is a
+ * no-op unfocused and applies the script after editor.focus()).
+ */
+async function focusEditor() {
+  return evaluate(`
+    (function() {
+      var m = ${FIND_MONACO};
+      if (!m) return false;
+      m.editor.focus();
+      return true;
+    })()
+  `);
+}
 
 /**
  * Opens the Pine Editor panel and waits for Monaco to become available.
@@ -311,8 +349,8 @@ export async function compile() {
 
   if (!clicked) {
     const c = await getClient();
-    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
+    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    await c.Input.dispatchKeyEvent({ type: 'keyUp', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter' });
   }
 
   await new Promise(r => setTimeout(r, 2000));
@@ -348,9 +386,12 @@ export async function save() {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
 
+  // Focus decides what Cmd/Ctrl+S saves: the SCRIPT with the editor focused,
+  // the chart LAYOUT otherwise.
+  await focusEditor();
   const c = await getClient();
-  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
-  await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 's', code: 'KeyS' });
+  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: SHORTCUT_MODIFIER, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
+  await c.Input.dispatchKeyEvent({ type: 'keyUp', modifiers: SHORTCUT_MODIFIER, key: 's', code: 'KeyS' });
   await new Promise(r => setTimeout(r, 800));
 
   // Handle "Save Script" name dialog that appears for new/unsaved scripts
@@ -430,46 +471,115 @@ export async function smartCompile() {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
 
-  const studiesBefore = await evaluate(`
+  // The apply gesture differs by state: Cmd/Ctrl+Enter always ADDS a new study
+  // instance (duplicating an applied script), while saving an applied script
+  // recompiles it in place. So detect whether the editor's script is already
+  // on the chart before choosing.
+  const before = await evaluate(`
+    (function() {
+      var names = null;
+      try {
+        var chart = window.TradingViewApi._activeChartWidgetWV.value();
+        if (chart && typeof chart.getAllStudies === 'function') {
+          names = chart.getAllStudies().map(function(s) { return s.name || s.title || ''; });
+        }
+      } catch(e) {}
+      var title = null;
+      var m = ${FIND_MONACO};
+      if (m && m.editor.getModel()) {
+        var src = m.editor.getModel().getValue();
+        var tm = src.match(/(?:strategy|indicator)\\s*\\(\\s*"([^"]*)"/);
+        if (tm) title = tm[1];
+      }
+      return { names: names, title: title };
+    })()
+  `);
+
+  const studiesBefore = Array.isArray(before?.names) ? before.names.length : null;
+  const alreadyOnChart = !!(before?.title && Array.isArray(before?.names) && before.names.indexOf(before.title) !== -1);
+
+  // Desktop builds label these buttons via aria-label or title with EMPTY
+  // textContent, so the scan must read all three. The button also renders
+  // LATE (the header re-renders after set_source/save), so callers retry.
+  const clickApplyButtonSnippet = `
+    (function() {
+      var nodes = document.querySelectorAll('button,[role=button]');
+      var addBtn = null;
+      var updateBtn = null;
+      for (var i = 0; i < nodes.length; i++) {
+        var b = nodes[i];
+        var label = ((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')).trim();
+        if (b.offsetParent === null) continue;
+        if (/save and add to chart/i.test(label)) {
+          b.click();
+          return 'Save and add to chart';
+        }
+        if (!addBtn && /\\badd to chart\\b/i.test(label)) addBtn = b;
+        if (!updateBtn && /\\bupdate on chart\\b/i.test(label)) updateBtn = b;
+      }
+      if (addBtn) { addBtn.click(); return 'Add to chart'; }
+      if (updateBtn) { updateBtn.click(); return 'Update on chart'; }
+      return null;
+    })()
+  `;
+
+  const tryApplyOnce = async () => {
+    const clicked = await evaluate(clickApplyButtonSnippet);
+    if (clicked) return clicked;
+    // No button rendered (yet): the platform shortcut as trusted CDP input,
+    // aimed at the editor — the binding only fires with Monaco focused.
+    await focusEditor();
+    const c = await getClient();
+    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    await c.Input.dispatchKeyEvent({ type: 'keyUp', modifiers: SHORTCUT_MODIFIER, key: 'Enter', code: 'Enter' });
+    return 'keyboard_shortcut';
+  };
+
+  const readStudyNames = () => evaluate(`
     (function() {
       try {
         var chart = window.TradingViewApi._activeChartWidgetWV.value();
-        if (chart && typeof chart.getAllStudies === 'function') return chart.getAllStudies().length;
+        if (chart && typeof chart.getAllStudies === 'function') {
+          return chart.getAllStudies().map(function(s) { return s.name || s.title || ''; });
+        }
       } catch(e) {}
       return null;
     })()
   `);
 
-  const buttonClicked = await evaluate(`
-    (function() {
-      var btns = document.querySelectorAll('button');
-      var addBtn = null;
-      var updateBtn = null;
-      var saveBtn = null;
-      for (var i = 0; i < btns.length; i++) {
-        var text = btns[i].textContent.trim();
-        if (/save and add to chart/i.test(text)) {
-          btns[i].click();
-          return 'Save and add to chart';
-        }
-        if (!addBtn && /^add to chart$/i.test(text)) addBtn = btns[i];
-        if (!updateBtn && /^update on chart$/i.test(text)) updateBtn = btns[i];
-        if (!saveBtn && btns[i].className.indexOf('saveButton') !== -1 && btns[i].offsetParent !== null) saveBtn = btns[i];
+  let action;
+  if (alreadyOnChart) {
+    await save();
+    action = 'save_update_in_place';
+    await new Promise(r => setTimeout(r, 2500));
+  } else {
+    // Apply resolves the last-SAVED script, not the live Monaco buffer
+    // (verified live: applying with an unsaved buffer added the previously
+    // saved script under a different title). pine_set_source writes the
+    // buffer programmatically without marking it dirty, so save explicitly
+    // before any apply gesture.
+    await save();
+
+    // Up to 3 attempts: the button appears asynchronously and the shortcut
+    // can be swallowed by stray overlays. POLL for the study after each
+    // gesture (a slow apply can land after any fixed delay — a blind retry
+    // then adds the script twice) and only re-gesture when nothing landed.
+    const baseCount = Array.isArray(before?.names) ? before.names.length : null;
+    const waitForStudyAdd = async (timeoutMs) => {
+      if (baseCount === null) { await new Promise(r => setTimeout(r, timeoutMs)); return true; }
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 500));
+        const names = await readStudyNames();
+        if (Array.isArray(names) && names.length > baseCount) return true;
       }
-      if (addBtn) { addBtn.click(); return 'Add to chart'; }
-      if (updateBtn) { updateBtn.click(); return 'Update on chart'; }
-      if (saveBtn) { saveBtn.click(); return 'Pine Save'; }
-      return null;
-    })()
-  `);
-
-  if (!buttonClicked) {
-    const c = await getClient();
-    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
+      return false;
+    };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      action = await tryApplyOnce();
+      if (await waitForStudyAdd(5000)) break;
+    }
   }
-
-  await new Promise(r => setTimeout(r, 2500));
 
   const errors = await evaluate(`
     (function() {
@@ -484,24 +594,35 @@ export async function smartCompile() {
     })()
   `);
 
-  const studiesAfter = await evaluate(`
+  const afterNames = await evaluate(`
     (function() {
       try {
         var chart = window.TradingViewApi._activeChartWidgetWV.value();
-        if (chart && typeof chart.getAllStudies === 'function') return chart.getAllStudies().length;
+        if (chart && typeof chart.getAllStudies === 'function') {
+          return chart.getAllStudies().map(function(s) { return s.name || s.title || ''; });
+        }
       } catch(e) {}
       return null;
     })()
   `);
 
+  const studiesAfter = Array.isArray(afterNames) ? afterNames.length : null;
   const studyAdded = (studiesBefore !== null && studiesAfter !== null) ? studiesAfter > studiesBefore : null;
+  const addedNames = (Array.isArray(before?.names) && Array.isArray(afterNames))
+    ? afterNames.filter((n) => before.names.indexOf(n) === -1)
+    : [];
 
   return {
     success: true,
-    button_clicked: buttonClicked || 'keyboard_shortcut',
+    button_clicked: action,
+    already_on_chart: alreadyOnChart,
     has_errors: errors?.length > 0,
     errors: errors || [],
-    study_added: studyAdded,
+    study_added: alreadyOnChart ? false : studyAdded,
+    // What actually landed — lets callers catch a stale-save apply (added
+    // study title differing from the editor's script title).
+    added_study: addedNames[0] || null,
+    editor_title: before?.title || null,
   };
 }
 
