@@ -206,6 +206,20 @@ export async function getIndicator({ entity_id }) {
       var result = { name: null, inputs: null, visible: null };
       try { result.visible = study.isVisible(); } catch(e) {}
       try { result.inputs = study.getInputValues(); } catch(e) { result.inputs_error = e.message; }
+      // Display metadata (input titles) lives on the model data source's
+      // metaInfo, not the widget study — getInputValues() only carries
+      // {id, value}. Merge titles in so callers never show raw in_N ids.
+      try {
+        var sources = api._chartWidget.model().model().dataSources();
+        for (var i = 0; i < sources.length; i++) {
+          var s = sources[i];
+          if (!s.metaInfo || !s.id || s.id() !== ${safeString(entity_id)}) continue;
+          var metaById = {};
+          (s.metaInfo().inputs || []).forEach(function(inp) { metaById[inp.id] = inp; });
+          result.meta_inputs = metaById;
+          break;
+        }
+      } catch (e) {}
       return result;
     })()
   `);
@@ -218,6 +232,17 @@ export async function getIndicator({ entity_id }) {
       if (inp.id === 'text' && typeof inp.value === 'string' && inp.value.length > 200) return false;
       if (typeof inp.value === 'string' && inp.value.length > 500) return false;
       return true;
+    });
+    const metaInputs = data?.meta_inputs || {};
+    inputs = inputs.map(inp => {
+      const meta = metaInputs[inp.id];
+      if (!meta) return inp;
+      return {
+        ...inp,
+        ...(meta.name ? { name: meta.name } : {}),
+        ...(meta.internalID ? { internalID: meta.internalID } : {}),
+        ...(meta.type ? { type: meta.type } : {}),
+      };
     });
   }
   return { success: true, entity_id, visible: data?.visible, inputs };
