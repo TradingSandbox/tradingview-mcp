@@ -12,8 +12,13 @@
  * Percent-ish fields are FRACTIONS (0.036 = 3.6%) — we convert to percent.
  *
  * Deep backtesting (custom date range beyond loaded chart bars) goes through
- * window.TradingViewApi.backtestingStrategyApi() → BacktestingStrategyFacade:
+ * a BacktestingStrategyFacade:
  *   setReportDataSource(true) + requestDeepBacktestingData(fromMs, toMs)
+ * Older TV builds exposed it as window.TradingViewApi.backtestingStrategyApi();
+ * current builds (2026-07 desktop app) removed that binding — the facade is a
+ * singleton behind webpack module export getBacktestingStrategyFacade(cwc),
+ * reached by hooking webpackChunktradingview for __webpack_require__ and
+ * scanning module factories for the export (see DEEP_FACADE_SNIPPET).
  * The result arrives over a dedicated websocket and is exposed as a WatchedValue
  * at facade.activeStrategyReportData. While deep mode is active we read reports
  * from the facade instead of the chart study (flag kept at window.__tvmcpDeep).
@@ -123,6 +128,48 @@ const READ_REPORT_SNIPPET = `
   `;
 
 const NO_STRATEGY_ERROR = 'No strategy found on chart. Add a strategy (Pine script with strategy() declaration) first.';
+
+/**
+ * Page-side helper: resolve the deep-backtest facade on both old and current
+ * TV builds. Old builds: TradingViewApi.backtestingStrategyApi(). Current
+ * builds dropped that binding; the facade singleton lives behind the webpack
+ * export getBacktestingStrategyFacade(chartWidgetCollection), so we push a
+ * fake chunk to capture __webpack_require__, find the exporting module by
+ * factory source, and construct it with TradingViewApi._chartWidgetCollection.
+ * The promise is cached — the facade is a singleton page-side anyway.
+ */
+const DEEP_FACADE_SNIPPET = `
+    function __tvmcpGetDeepFacade() {
+      var api = window.TradingViewApi;
+      if (api && typeof api.backtestingStrategyApi === 'function') return api.backtestingStrategyApi();
+      if (window.__tvmcpDeepFacadePromise) return window.__tvmcpDeepFacadePromise;
+      try {
+        var req = window.__tvmcpWebpackRequire;
+        if (!req) {
+          var chunk = window.webpackChunktradingview;
+          if (!chunk || typeof chunk.push !== 'function') {
+            return Promise.reject(new Error('Deep backtesting unavailable: TradingViewApi.backtestingStrategyApi is gone and the webpack runtime was not found.'));
+          }
+          chunk.push([['tvmcp' + String(Math.random()).slice(2)], {}, function(r) { req = r; }]);
+          window.__tvmcpWebpackRequire = req;
+        }
+        if (!req || !req.m) {
+          return Promise.reject(new Error('Deep backtesting unavailable: webpack require hook did not attach.'));
+        }
+        var getterId = null;
+        for (var id in req.m) {
+          if (String(req.m[id]).indexOf('getBacktestingStrategyFacade:') !== -1) { getterId = id; break; }
+        }
+        if (!getterId) {
+          return Promise.reject(new Error('Deep backtesting unavailable: getBacktestingStrategyFacade module not found (TradingView build change).'));
+        }
+        window.__tvmcpDeepFacadePromise = req(getterId).getBacktestingStrategyFacade(api._chartWidgetCollection);
+        return window.__tvmcpDeepFacadePromise;
+      } catch (e) {
+        return Promise.reject(new Error('Deep backtesting unavailable: ' + e.message));
+      }
+    }
+  `;
 
 // ── Shared shaping helpers (exported for tests) ──────────────────────────
 
@@ -434,10 +481,17 @@ export async function setProperties({ entity_id, properties: propsRaw, timeout_m
         var facade = __chartApi.getStudyById(__strat.id());
         var inputs = facade.getInputValues();
         var applied = {};
+        var changed = false;
         Object.keys(overrides).forEach(function(k) {
           var id = idByInternal[k];
-          for (var i = 0; i < inputs.length; i++) if (inputs[i].id === id) { inputs[i].value = overrides[k]; applied[k] = overrides[k]; }
+          for (var i = 0; i < inputs.length; i++) if (inputs[i].id === id) {
+            if (inputs[i].value !== overrides[k]) changed = true;
+            inputs[i].value = overrides[k];
+            applied[k] = overrides[k];
+          }
         });
+        // A no-op set triggers no recalculation — nothing to wait for.
+        if (!changed) return Promise.resolve({ applied: applied, wait: { event: 'noop' } });
         return ${waitRecalcSnippet('facade.setInputValues(inputs);', '__TIMEOUT__')}.then(function(w) {
           return { applied: applied, wait: w };
         });
@@ -535,7 +589,8 @@ export async function setBacktestRange({ action, from, to, preset, timeout_ms, _
 
   const result = await evaluateAsync(`
     (function() {
-      return window.TradingViewApi.backtestingStrategyApi().then(function(facade) {
+      ${DEEP_FACADE_SNIPPET}
+      return __tvmcpGetDeepFacade().then(function(facade) {
         window.__tvmcpDeep = { active: true, facade: facade };
         facade.setReportDataSource(true);
         facade.requestDeepBacktestingData(${fromMs}, ${toMs});
@@ -670,21 +725,31 @@ export async function optimize({ entity_id, grid: gridRaw, metric, max_combinati
 
   const runCombo = async (overrides, applyRange = true, captureDiagnostics = false) => evaluateAsync(`
     (function() {
+      ${DEEP_FACADE_SNIPPET}
       try {
         ${findStrategySnippet(entity_id)}
         if (!__strat) return Promise.resolve({ error: ${JSON.stringify(NO_STRATEGY_ERROR)} });
         var facade = __chartApi.getStudyById(__strat.id());
         var inputs = facade.getInputValues();
         var overrides = ${JSON.stringify(overrides)};
+        var changed = false;
         for (var i = 0; i < inputs.length; i++) {
-          if (overrides.hasOwnProperty(inputs[i].id)) inputs[i].value = overrides[inputs[i].id];
+          if (overrides.hasOwnProperty(inputs[i].id)) {
+            if (inputs[i].value !== overrides[inputs[i].id]) changed = true;
+            inputs[i].value = overrides[inputs[i].id];
+          }
         }
-        return ${waitRecalcSnippet('facade.setInputValues(inputs);', String(perRunTimeout))}.then(function(w) {
+        // Setting inputs to their current values triggers NO recalculation —
+        // waiting for one can only time out. Read the existing report instead.
+        var waitPromise = changed
+          ? ${waitRecalcSnippet('facade.setInputValues(inputs);', String(perRunTimeout))}
+          : Promise.resolve({ event: 'noop' });
+        return waitPromise.then(function(w) {
           if (w.event === 'error') return { error: w.error || 'strategy error' };
           if (w.event === 'timeout') return { error: 'recalculation timed out' };
           ${range ? `
           if (${applyRange ? 'true' : 'false'}) {
-            return window.TradingViewApi.backtestingStrategyApi().then(function(deep) {
+            return __tvmcpGetDeepFacade().then(function(deep) {
               window.__tvmcpDeep = { active: true, facade: deep };
               deep.setReportDataSource(true);
               deep.requestDeepBacktestingData(${range.fromMs}, ${range.toMs});
