@@ -1,12 +1,13 @@
 /**
  * Unit tests for the structured screener field catalog.
- * Pure logic only — no TradingView connection needed (fetchMetainfo / fieldInfo
- * with a market are excluded as they require a live CDP page).
+ * Pure logic only — no TradingView connection needed. The live-validation
+ * path is covered by stubbing globalThis.fetch (metainfo is fetched directly
+ * from Node); only the CDP fallback needs a live page and stays untested here.
  *
  * Run: node --test tests/screener_catalog.test.js
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -121,5 +122,39 @@ describe('fieldInfo (static, no market)', () => {
     assert.equal(r.resolved, null);
     assert.deepEqual(r.examples, ['some_made_up_column']);
     assert.ok(r.hint);
+  });
+});
+
+describe('fieldInfo live validation (direct Node fetch, no CDP)', () => {
+  // Each test uses its own market slug so the per-market cache never leaks
+  // between tests. globalThis.fetch is stubbed and restored around each test.
+  const realFetch = globalThis.fetch;
+
+  function metainfoJson(names) {
+    return async () => new Response(JSON.stringify({ fields: names.map(n => ({ n })) }), { status: 200 });
+  }
+
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  it('live-validates against one direct metainfo fetch', async () => {
+    let calls = 0;
+    globalThis.fetch = async (url, opts) => {
+      calls += 1;
+      assert.equal(url, 'https://scanner.tradingview.com/mkt_direct/metainfo');
+      return metainfoJson(['close', 'RSI'])();
+    };
+    const ok = await fieldInfo('close', 'mkt_direct');
+    assert.equal(ok.live.field_valid, true);
+    const bad = await fieldInfo('totally_bogus', 'mkt_direct');
+    assert.equal(bad.live.field_valid, false);
+    assert.equal(calls, 1, 'metainfo fetched once, then served from cache');
+  });
+
+  it('accepts intrinsic columns absent from metainfo', async () => {
+    globalThis.fetch = metainfoJson(['close']);
+    for (const field of ['name', 'description', 'Value.Traded']) {
+      const r = await fieldInfo(field, 'mkt_intrinsic');
+      assert.equal(r.live.field_valid, true, `${field} should be intrinsic-valid`);
+    }
   });
 });

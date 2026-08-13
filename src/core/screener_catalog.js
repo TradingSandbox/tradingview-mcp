@@ -316,22 +316,41 @@ export function catalogView({ category, search, verbose = false } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Live metainfo (validation / expansion) — fetched in-page over CDP, cached.
-// Schema is global across markets, so the cache key barely matters, but we key
-// by market anyway to stay correct if TV ever diverges.
+// Live metainfo (validation / expansion) — cached per market. The endpoint is
+// public, so it's fetched straight from Node; the in-page CDP fetch survives
+// only as a fallback for environments where direct egress is blocked. Schema
+// is global across markets, so the cache key barely matters, but we key by
+// market anyway to stay correct if TV ever diverges.
 // ---------------------------------------------------------------------------
 
 const _metaCache = new Map();
+const METAINFO_TIMEOUT_MS = 10_000;
 
 // A handful of columns are queryable but NOT enumerated in /metainfo (TV treats
 // them as intrinsic identity/derived columns). Verified live against /scan.
 // Without this, live-validation would false-negative on them.
 const INTRINSIC_COLUMNS = ['name', 'description', 'Value.Traded'];
 
-/** Fetch the set of every column name the scanner exposes for a market. */
-export async function fetchMetainfo(market = 'america') {
-  if (_metaCache.has(market)) return _metaCache.get(market);
-  const url = `${SCANNER_BASE}/${encodeURIComponent(market)}/metainfo`;
+/** Direct Node-side fetch of the metainfo field names; null on any failure. */
+async function fetchMetainfoDirect(url) {
+  try {
+    const r = await fetch(url, {
+      signal: AbortSignal.timeout(METAINFO_TIMEOUT_MS),
+      headers: { Origin: 'https://www.tradingview.com', Referer: 'https://www.tradingview.com/' },
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const names = Array.isArray(j && j.fields)
+      ? j.fields.map(f => f && f.n).filter(n => typeof n === 'string' && n.length > 0)
+      : [];
+    return names.length ? names : null;
+  } catch {
+    return null;
+  }
+}
+
+/** In-page CDP fetch of the metainfo field names; throws with the reason. */
+async function fetchMetainfoInPage(url) {
   const expr = `
     (async function() {
       try {
@@ -348,7 +367,15 @@ export async function fetchMetainfo(market = 'america') {
       ? `metainfo fetch failed: ${res.fetchError}`
       : `metainfo fetch failed (HTTP ${res && res.status})`);
   }
-  const set = new Set(res.fields);
+  return res.fields;
+}
+
+/** Fetch the set of every column name the scanner exposes for a market. */
+export async function fetchMetainfo(market = 'america') {
+  if (_metaCache.has(market)) return _metaCache.get(market);
+  const url = `${SCANNER_BASE}/${encodeURIComponent(market)}/metainfo`;
+  const fields = (await fetchMetainfoDirect(url)) ?? (await fetchMetainfoInPage(url));
+  const set = new Set(fields);
   for (const c of INTRINSIC_COLUMNS) set.add(c);
   _metaCache.set(market, set);
   return set;
