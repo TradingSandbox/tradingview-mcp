@@ -51,7 +51,9 @@ const OPTION_COLUMNS = [
 ];
 
 // Columns we read for each futures contract.
-const FUTURES_COLUMNS = ['name', 'description', 'expiration', 'close', 'change', 'currency'];
+// open_interest/volume verified live on the futures scanner (2026-08-13):
+// populated per contract for NSE stock futures; null-safe everywhere below.
+const FUTURES_COLUMNS = ['name', 'description', 'expiration', 'close', 'change', 'currency', 'open_interest', 'volume'];
 
 // Futures month codes (Jan..Dec). Used to peel a dated/continuous contract
 // suffix off a symbol to recover its root.
@@ -480,6 +482,8 @@ export async function futuresCurve(opts = {}) {
       last: round(d[3], 4),
       change_pct: round(d[4], 2),
       currency: d[5] ?? null,
+      open_interest: d[6] ?? null,
+      volume: d[7] ?? null,
       days_to_expiry: daysToExpiry(d[2]),
       is_continuous: typeof row.s === 'string' && row.s.endsWith('!'),
     };
